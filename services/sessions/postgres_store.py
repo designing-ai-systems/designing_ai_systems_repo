@@ -165,9 +165,9 @@ class PostgresSessionStorage(SessionStorage):
             cur.execute(
                 """INSERT INTO memories (user_id, key, value, session_id, created_at, updated_at)
                    VALUES (%s, %s, %s, %s, %s, %s)
-                   ON CONFLICT (user_id, key, COALESCE(session_id, ''))
+                   ON CONFLICT (user_id, key, session_id)
                    DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at""",
-                (user_id, key, json.dumps(value), session_id, now, now),
+                (user_id, key, json.dumps(value), session_id or "", now, now),
             )
             self.conn.commit()
         return True
@@ -186,6 +186,8 @@ class PostgresSessionStorage(SessionStorage):
         if session_id:
             query += " AND session_id = %s"
             params.append(session_id)
+        else:
+            query += " AND session_id = ''"
         with self.conn.cursor() as cur:
             cur.execute(query, params)
             rows = cur.fetchall()
@@ -194,13 +196,8 @@ class PostgresSessionStorage(SessionStorage):
     def delete_memory(
         self, user_id: str, key: str, session_id: Optional[str] = None
     ) -> bool:
-        query = "DELETE FROM memories WHERE user_id = %s AND key = %s"
-        params: list = [user_id, key]
-        if session_id:
-            query += " AND session_id = %s"
-            params.append(session_id)
-        else:
-            query += " AND session_id IS NULL"
+        query = "DELETE FROM memories WHERE user_id = %s AND key = %s AND session_id = %s"
+        params: list = [user_id, key, session_id or ""]
         with self.conn.cursor() as cur:
             cur.execute(query, params)
             self.conn.commit()

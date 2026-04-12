@@ -35,14 +35,43 @@ pytest tests/ -v
 
 ### Optional: PostgreSQL storage
 
+By default the Session Service uses in-memory storage. To persist sessions
+across restarts, use PostgreSQL.
+
+#### macOS (Homebrew)
+
+```bash
+# Install PostgreSQL 16
+brew install postgresql@16
+
+# Start the server (runs in the background, auto-starts on login)
+brew services start postgresql@16
+
+# Create the database
+createdb genai_platform
+
+# Apply the schema
+psql genai_platform < services/sessions/schema.sql
+```
+
+> **Tip:** If `psql` / `createdb` are not on your PATH after install, add the
+> Homebrew PostgreSQL bin directory:
+> ```bash
+> echo 'export PATH="/opt/homebrew/opt/postgresql@16/bin:$PATH"' >> ~/.zshrc
+> source ~/.zshrc
+> ```
+
+#### Install the Python driver and configure
+
 ```bash
 pip install -e ".[postgres]"
+
 # Set env vars before starting the session service:
 export SESSION_STORAGE=postgres
 export DB_CONNECTION_STRING="postgresql://localhost/genai_platform"
-# Schema is auto-created on first connection. Manual setup:
-psql genai_platform < services/sessions/schema.sql
 ```
+
+The session service will now read and write to PostgreSQL.
 
 ## Quick Start
 
