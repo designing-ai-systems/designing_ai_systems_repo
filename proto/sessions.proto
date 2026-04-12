@@ -1,144 +1,150 @@
+// Session Service Protocol Buffer definitions.
+//
+// Book: "Designing AI Systems" (https://www.manning.com/books/designing-ai-systems)
+//   Listing 4.3: Service definition (SessionService RPCs)
+//   Listing 4.4: Session management request/response types
+//   Listing 4.5: AddMessages request/response types
+//   Listing 4.6: GetMessages request/response types (with pagination)
+//   Listing 4.7: Message structure and nested ToolCall/Function types
+
 syntax = "proto3";
 
-package proto;
+package sessions;
 
-// Session Service Protocol Buffer definitions
-
+// Listing 4.3
 service SessionService {
-  // Get existing session or create a new one
-  rpc GetOrCreateSession(GetOrCreateSessionRequest) returns (GetOrCreateSessionResponse);
-  
-  // Add messages to a session
-  rpc AddMessages(AddMessagesRequest) returns (AddMessagesResponse);
-  
-  // Get messages from a session
-  rpc GetMessages(GetMessagesRequest) returns (GetMessagesResponse);
-  
-  // Delete a session
-  rpc DeleteSession(DeleteSessionRequest) returns (DeleteSessionResponse);
-  
-  // Save memory entry
-  rpc SaveMemory(SaveMemoryRequest) returns (SaveMemoryResponse);
-  
-  // Get memory entries
-  rpc GetMemory(GetMemoryRequest) returns (GetMemoryResponse);
-  
-  // Delete a memory entry
-  rpc DeleteMemory(DeleteMemoryRequest) returns (DeleteMemoryResponse);
-  
-  // Clear all memories for a user
-  rpc ClearUserMemory(ClearUserMemoryRequest) returns (ClearUserMemoryResponse);
+    rpc GetOrCreateSession(GetOrCreateSessionRequest)
+        returns (GetOrCreateSessionResponse);
+    rpc ListSessions(ListSessionsRequest)
+        returns (ListSessionsResponse);
+    rpc AddMessages(AddMessagesRequest)
+        returns (AddMessagesResponse);
+    rpc GetMessages(GetMessagesRequest)
+        returns (GetMessagesResponse);
+    rpc DeleteSession(DeleteSessionRequest)
+        returns (DeleteSessionResponse);
+
+    // Memory operations
+    rpc SaveMemory(SaveMemoryRequest) returns (SaveMemoryResponse);
+    rpc GetMemory(GetMemoryRequest) returns (GetMemoryResponse);
+    rpc DeleteMemory(DeleteMemoryRequest) returns (DeleteMemoryResponse);
+    rpc ClearUserMemory(ClearUserMemoryRequest) returns (ClearUserMemoryResponse);
 }
 
-// Session management messages
+// Listing 4.4: Session management types
 message GetOrCreateSessionRequest {
-  string user_id = 1;
-  optional string session_id = 2;  // Optional: pass to resume existing, omit for new
+    string user_id = 1;
+    optional string session_id = 2;
+}
+
+message Session {
+    string session_id = 1;
+    string user_id = 2;
+    int64 created_at = 3;
+    int64 updated_at = 4;
 }
 
 message GetOrCreateSessionResponse {
-  string session_id = 1;
-  string user_id = 2;
-  int64 created_at = 3;
-  int64 updated_at = 4;
+    Session session = 1;
 }
 
-// Message operations
+message ListSessionsRequest {
+    string user_id = 1;
+}
+
+message ListSessionsResponse {
+    repeated Session sessions = 1;
+}
+
+// Listing 4.5: AddMessages types
 message AddMessagesRequest {
-  string session_id = 1;
-  repeated Message messages = 2;
+    string session_id = 1;
+    repeated Message messages = 2;
 }
 
 message AddMessagesResponse {
-  bool success = 1;
-  int32 message_count = 2;
+    bool success = 1;
+    int32 message_count = 2;
 }
 
+// Listing 4.6: GetMessages types (with pagination)
 message GetMessagesRequest {
-  string session_id = 1;
-  optional int32 limit = 2;
-  optional int32 offset = 3;
-  optional string strategy = 4;  // Context window strategy: "truncate", "hierarchical", etc.
+    string session_id = 1;
+    optional int32 limit = 2;
+    optional int32 offset = 3;
+    optional string strategy = 4;
 }
 
 message GetMessagesResponse {
-  repeated Message messages = 1;
-  int32 total_count = 2;
+    repeated Message messages = 1;
+    int32 total_count = 2;
 }
 
 message DeleteSessionRequest {
-  string session_id = 1;
+    string session_id = 1;
 }
 
 message DeleteSessionResponse {
-  bool success = 1;
+    bool success = 1;
 }
 
-// Message structure
+// Listing 4.7: Message structure and nested types
 message Message {
-  string role = 1;  // "user", "assistant", "system", or "tool"
-  optional string content = 2;
-  repeated MessageToolCall tool_calls = 3;
-  optional string tool_call_id = 4;
-  optional string name = 5;
-  int64 timestamp = 6;
+    string role = 1;
+    optional string content = 2;
+    repeated ToolCall tool_calls = 3;
+    optional string tool_call_id = 4;
+    optional string name = 5;
+    int64 timestamp = 6;
 }
 
-message MessageFunction {
-  string name = 1;
-  string arguments = 2;  // JSON-encoded string
+message ToolCall {
+    string id = 1;
+    string type = 2;
+    Function function = 3;
 }
 
-message MessageToolCall {
-  string id = 1;
-  string type = 2;  // "function"
-  MessageFunction function = 3;
+message Function {
+    string name = 1;
+    string arguments = 2;
 }
 
 // Memory operations
 message SaveMemoryRequest {
-  string user_id = 1;
-  string key = 2;
-  string value = 3;  // JSON-encoded value
-  optional string session_id = 4;
+    string user_id = 1;
+    string key = 2;
+    string value = 3;
+    optional string session_id = 4;
 }
 
 message SaveMemoryResponse {
-  bool success = 1;
+    bool success = 1;
 }
 
 message GetMemoryRequest {
-  string user_id = 1;
-  optional string key = 2;  // If provided, get specific key; otherwise get all
-  optional string session_id = 3;  // Filter by session if provided
+    string user_id = 1;
+    optional string key = 2;
+    optional string session_id = 3;
 }
 
 message GetMemoryResponse {
-  map<string, string> memories = 1;  // key -> JSON-encoded value
+    map<string, string> memories = 1;
 }
 
 message DeleteMemoryRequest {
-  string user_id = 1;
-  string key = 2;
-  optional string session_id = 3;
+    string user_id = 1;
+    string key = 2;
+    optional string session_id = 3;
 }
 
 message DeleteMemoryResponse {
-  bool success = 1;
+    bool success = 1;
 }
 
 message ClearUserMemoryRequest {
-  string user_id = 1;
+    string user_id = 1;
 }
 
 message ClearUserMemoryResponse {
-  int32 count = 1;  // Number of memories deleted
-}
-
-// Backwards compatibility - for existing SDK code
-message Session {
-  string session_id = 1;
-  string user_id = 2;
-  int64 created_at = 3;
-  int64 updated_at = 4;
+    int32 count = 1;
 }

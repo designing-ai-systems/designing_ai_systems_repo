@@ -5,7 +5,7 @@ import warnings
 
 from proto import models_pb2 as models__pb2
 
-GRPC_GENERATED_VERSION = '1.76.0'
+GRPC_GENERATED_VERSION = '1.80.0'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 
@@ -26,8 +26,7 @@ if _version_not_supported:
 
 
 class ModelServiceStub(object):
-    """Model Service Protocol Buffer definitions
-
+    """Listing 3.5
     """
 
     def __init__(self, channel):
@@ -37,60 +36,59 @@ class ModelServiceStub(object):
             channel: A grpc.Channel.
         """
         self.Chat = channel.unary_unary(
-                '/proto.ModelService/Chat',
+                '/models.ModelService/Chat',
                 request_serializer=models__pb2.ChatRequest.SerializeToString,
                 response_deserializer=models__pb2.ChatResponse.FromString,
                 _registered_method=True)
         self.ChatStream = channel.unary_stream(
-                '/proto.ModelService/ChatStream',
+                '/models.ModelService/ChatStream',
                 request_serializer=models__pb2.ChatRequest.SerializeToString,
                 response_deserializer=models__pb2.ChatChunk.FromString,
                 _registered_method=True)
         self.ListModels = channel.unary_unary(
-                '/proto.ModelService/ListModels',
+                '/models.ModelService/ListModels',
                 request_serializer=models__pb2.ListModelsRequest.SerializeToString,
                 response_deserializer=models__pb2.ListModelsResponse.FromString,
                 _registered_method=True)
         self.GetModelCapabilities = channel.unary_unary(
-                '/proto.ModelService/GetModelCapabilities',
+                '/models.ModelService/GetModelCapabilities',
                 request_serializer=models__pb2.GetCapabilitiesRequest.SerializeToString,
                 response_deserializer=models__pb2.ModelCapabilities.FromString,
                 _registered_method=True)
         self.RegisterPrompt = channel.unary_unary(
-                '/proto.ModelService/RegisterPrompt',
+                '/models.ModelService/RegisterPrompt',
                 request_serializer=models__pb2.RegisterPromptRequest.SerializeToString,
                 response_deserializer=models__pb2.RegisterPromptResponse.FromString,
                 _registered_method=True)
         self.GetPrompt = channel.unary_unary(
-                '/proto.ModelService/GetPrompt',
+                '/models.ModelService/GetPrompt',
                 request_serializer=models__pb2.GetPromptRequest.SerializeToString,
                 response_deserializer=models__pb2.Prompt.FromString,
                 _registered_method=True)
         self.ListPrompts = channel.unary_unary(
-                '/proto.ModelService/ListPrompts',
+                '/models.ModelService/ListPrompts',
                 request_serializer=models__pb2.ListPromptsRequest.SerializeToString,
                 response_deserializer=models__pb2.ListPromptsResponse.FromString,
                 _registered_method=True)
         self.RegisterModel = channel.unary_unary(
-                '/proto.ModelService/RegisterModel',
+                '/models.ModelService/RegisterModel',
                 request_serializer=models__pb2.RegisterModelRequest.SerializeToString,
                 response_deserializer=models__pb2.RegisterModelResponse.FromString,
                 _registered_method=True)
         self.ListRegisteredModels = channel.unary_unary(
-                '/proto.ModelService/ListRegisteredModels',
+                '/models.ModelService/ListRegisteredModels',
                 request_serializer=models__pb2.ListRegisteredModelsRequest.SerializeToString,
                 response_deserializer=models__pb2.ListRegisteredModelsResponse.FromString,
                 _registered_method=True)
         self.GetModelStatus = channel.unary_unary(
-                '/proto.ModelService/GetModelStatus',
+                '/models.ModelService/GetModelStatus',
                 request_serializer=models__pb2.GetModelStatusRequest.SerializeToString,
                 response_deserializer=models__pb2.ModelStatus.FromString,
                 _registered_method=True)
 
 
 class ModelServiceServicer(object):
-    """Model Service Protocol Buffer definitions
-
+    """Listing 3.5
     """
 
     def Chat(self, request, context):
@@ -212,15 +210,14 @@ def add_ModelServiceServicer_to_server(servicer, server):
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
-            'proto.ModelService', rpc_method_handlers)
+            'models.ModelService', rpc_method_handlers)
     server.add_generic_rpc_handlers((generic_handler,))
-    server.add_registered_method_handlers('proto.ModelService', rpc_method_handlers)
+    server.add_registered_method_handlers('models.ModelService', rpc_method_handlers)
 
 
  # This class is part of an EXPERIMENTAL API.
 class ModelService(object):
-    """Model Service Protocol Buffer definitions
-
+    """Listing 3.5
     """
 
     @staticmethod
@@ -237,7 +234,7 @@ class ModelService(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/proto.ModelService/Chat',
+            '/models.ModelService/Chat',
             models__pb2.ChatRequest.SerializeToString,
             models__pb2.ChatResponse.FromString,
             options,
@@ -264,7 +261,7 @@ class ModelService(object):
         return grpc.experimental.unary_stream(
             request,
             target,
-            '/proto.ModelService/ChatStream',
+            '/models.ModelService/ChatStream',
             models__pb2.ChatRequest.SerializeToString,
             models__pb2.ChatChunk.FromString,
             options,
@@ -291,7 +288,7 @@ class ModelService(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/proto.ModelService/ListModels',
+            '/models.ModelService/ListModels',
             models__pb2.ListModelsRequest.SerializeToString,
             models__pb2.ListModelsResponse.FromString,
             options,
@@ -318,7 +315,7 @@ class ModelService(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/proto.ModelService/GetModelCapabilities',
+            '/models.ModelService/GetModelCapabilities',
             models__pb2.GetCapabilitiesRequest.SerializeToString,
             models__pb2.ModelCapabilities.FromString,
             options,
@@ -345,7 +342,7 @@ class ModelService(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/proto.ModelService/RegisterPrompt',
+            '/models.ModelService/RegisterPrompt',
             models__pb2.RegisterPromptRequest.SerializeToString,
             models__pb2.RegisterPromptResponse.FromString,
             options,
@@ -372,7 +369,7 @@ class ModelService(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/proto.ModelService/GetPrompt',
+            '/models.ModelService/GetPrompt',
             models__pb2.GetPromptRequest.SerializeToString,
             models__pb2.Prompt.FromString,
             options,
@@ -399,7 +396,7 @@ class ModelService(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/proto.ModelService/ListPrompts',
+            '/models.ModelService/ListPrompts',
             models__pb2.ListPromptsRequest.SerializeToString,
             models__pb2.ListPromptsResponse.FromString,
             options,
@@ -426,7 +423,7 @@ class ModelService(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/proto.ModelService/RegisterModel',
+            '/models.ModelService/RegisterModel',
             models__pb2.RegisterModelRequest.SerializeToString,
             models__pb2.RegisterModelResponse.FromString,
             options,
@@ -453,7 +450,7 @@ class ModelService(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/proto.ModelService/ListRegisteredModels',
+            '/models.ModelService/ListRegisteredModels',
             models__pb2.ListRegisteredModelsRequest.SerializeToString,
             models__pb2.ListRegisteredModelsResponse.FromString,
             options,
@@ -480,7 +477,7 @@ class ModelService(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/proto.ModelService/GetModelStatus',
+            '/models.ModelService/GetModelStatus',
             models__pb2.GetModelStatusRequest.SerializeToString,
             models__pb2.ModelStatus.FromString,
             options,

@@ -49,19 +49,19 @@ def test_discovery(platform: GenAIPlatform):
     models = platform.models.list_models()
     print(f"\nAvailable models: {len(models)}")
     for model in models:
-        print(f"  - {model['name']} ({model['provider']})")
-        print(f"    Context: {model['capabilities']['context_window']}")
-        print(f"    Vision: {model['capabilities']['supports_vision']}")
-        print(f"    Tools: {model['capabilities']['supports_tools']}")
+        print(f"  - {model.name} ({model.provider})")
+        print(f"    Context: {model.capabilities.context_window}")
+        print(f"    Vision: {model.capabilities.supports_vision}")
+        print(f"    Tools: {model.capabilities.supports_tools}")
     
     # Get capabilities for specific model
     if models:
-        model_name = models[0]['name']
+        model_name = models[0].name
         caps = platform.models.get_model_capabilities(model_name)
         print(f"\nCapabilities for {model_name}:")
-        print(f"  Context window: {caps['context_window']}")
-        print(f"  Vision: {caps['supports_vision']}")
-        print(f"  Tools: {caps['supports_tools']}")
+        print(f"  Context window: {caps.context_window}")
+        print(f"  Vision: {caps.supports_vision}")
+        print(f"  Tools: {caps.supports_tools}")
 
 
 def test_chat(platform: GenAIPlatform, model: str, prompt: str):
@@ -76,11 +76,12 @@ def test_chat(platform: GenAIPlatform, model: str, prompt: str):
         max_tokens=150
     )
     
-    print(f"Response: {response['text']}")
-    print(f"Tokens: {response['usage']['total_tokens']} "
-          f"(prompt: {response['usage']['prompt_tokens']}, "
-          f"completion: {response['usage']['completion_tokens']})")
-    print(f"Finish reason: {response['finish_reason']}")
+    print(f"Response: {response.content}")
+    if response.usage:
+        print(f"Tokens: {response.usage.total_tokens} "
+              f"(prompt: {response.usage.prompt_tokens}, "
+              f"completion: {response.usage.completion_tokens})")
+    print(f"Finish reason: {response.finish_reason}")
 
 
 def test_streaming(platform: GenAIPlatform, model: str):
@@ -88,13 +89,13 @@ def test_streaming(platform: GenAIPlatform, model: str):
     print(f"\n[Streaming] Model: {model}")
     print("Streaming response: ", end="", flush=True)
     
-    for token in platform.models.chat_stream(
+    for chunk in platform.models.chat_stream(
         model=model,
         messages=[{"role": "user", "content": "Count from 1 to 5, one number per line."}],
         temperature=0.7,
         max_tokens=50
     ):
-        print(token, end="", flush=True)
+        print(chunk.token, end="", flush=True)
     
     print()
 

@@ -1,8 +1,15 @@
 """
 Quick start example for Model Service.
 
-Demonstrates basic chat with OpenAI and Anthropic.
-Requires OPENAI_API_KEY and/or ANTHROPIC_API_KEY in .env file.
+Demonstrates chat, streaming, model discovery, and **client-side fallback**.
+Primary model: claude-sonnet-4-5 (Anthropic) with gpt-4o (OpenAI) as fallback.
+
+Requires ANTHROPIC_API_KEY and/or OPENAI_API_KEY in .env file.
+
+Book: "Designing AI Systems" (https://www.manning.com/books/designing-ai-systems)
+  - Listing 3.12: FallbackConfig dataclass
+  - Listing 3.18: ModelClient.chat() with fallback_config
+  - Listing 3.20: Complete workflow example using Model Service
 """
 
 import sys
@@ -13,6 +20,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from genai_platform import GenAIPlatform
+from services.models.models import FallbackConfig, RetryConfig
 from services.models.main import main as start_model_service
 from services.gateway.main import main as start_gateway
 
@@ -35,79 +43,105 @@ def main():
     start_service_in_thread(start_gateway, "Gateway")
     time.sleep(1)
     print("Services ready!\n")
-    
+
     platform = GenAIPlatform()
-    
-    # Example 1: Simple chat with OpenAI
+
+    # --- Example 1: Model discovery ---
+    available = platform.models.list_models()
+    providers = {m.provider for m in available}
+
     print("=" * 50)
-    print("OpenAI (gpt-4o)")
+    print("Available models")
+    print("=" * 50)
+    for m in available:
+        print(f"  {m.name} ({m.provider}) - context: {m.capabilities.context_window}")
+    print()
+
+    if not providers:
+        print("No providers configured. Set ANTHROPIC_API_KEY or OPENAI_API_KEY in .env")
+        sys.exit(1)
+
+    # --- Example 2: Test both providers if both keys exist ---
+    if "anthropic" in providers and "openai" in providers:
+        print("=" * 50)
+        print("Testing both providers (both API keys detected)")
+        print("=" * 50)
+        
+        test_question = "Say 'Hello' in one word."
+        
+        # Test Anthropic
+        print("\n[Anthropic]")
+        resp = platform.models.chat(
+            model="claude-sonnet-4-5",
+            messages=[{"role": "user", "content": test_question}],
+            max_tokens=10,
+        )
+        print(f"  Response: {resp.content}")
+        print(f"  Model: {resp.model}")
+        
+        # Test OpenAI
+        print("\n[OpenAI]")
+        resp = platform.models.chat(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": test_question}],
+            max_tokens=10,
+        )
+        print(f"  Response: {resp.content}")
+        print(f"  Model: {resp.model}")
+        print("\n✓ Both providers working!\n")
+    else:
+        print(f"Only {', '.join(providers)} configured. Set both keys to test multi-provider support.\n")
+
+    # --- Configure fallback: Anthropic primary, OpenAI fallback ---
+    fallback = FallbackConfig(
+        providers=["gpt-4o"],
+        retry_config=RetryConfig(max_retries=1),
+    )
+    primary_model = "claude-sonnet-4-5"
+
+    # --- Example 3: Chat with fallback ---
+    print("=" * 50)
+    print(f"Chat with fallback (primary={primary_model}, fallback=gpt-4o)")
     print("=" * 50)
     question = "Explain quantum computing in one sentence."
     print(f"Q: {question}")
-    
+
     response = platform.models.chat(
-        model="gpt-4o",
+        model=primary_model,
         messages=[{"role": "user", "content": question}],
         temperature=0.7,
-        max_tokens=100
+        max_tokens=100,
+        fallback_config=fallback,
     )
-    
-    print(f"A: {response['text']}")
-    print(f"Tokens: {response['usage']['total_tokens']}\n")
-    
-    # Example 2: Simple chat with Anthropic
+
+    print(f"A: {response.content}")
+    print(f"Served by: {response.provider} / {response.model}")
+    if response.usage:
+        print(f"Tokens: {response.usage.total_tokens}")
+    print()
+
+    # --- Example 4: Streaming with fallback ---
     print("=" * 50)
-    print("Anthropic (claude-sonnet-4-5)")
+    print(f"Streaming with fallback (primary={primary_model}, fallback=gpt-4o)")
     print("=" * 50)
-    question = "What's the speed of light?"
-    print(f"Q: {question}")
-    
-    response = platform.models.chat(
-        model="claude-sonnet-4-5",
-        messages=[{"role": "user", "content": question}],
-        temperature=0.7,
-        max_tokens=100
-    )
-    
-    print(f"A: {response['text']}")
-    print(f"Tokens: {response['usage']['total_tokens']}\n")
-    
-    # Example 3: Streaming with OpenAI
-    print("=" * 50)
-    print("Streaming - OpenAI (gpt-4o)")
-    print("=" * 50)
-    question = "Count from 1 to 3."
+    question = "Count from 1 to 5."
     print(f"Q: {question}")
     print("A: ", end="", flush=True)
-    
-    for token in platform.models.chat_stream(
-        model="gpt-4o",
+
+    last_model = None
+    for chunk in platform.models.chat_stream(
+        model=primary_model,
         messages=[{"role": "user", "content": question}],
-        max_tokens=50
+        max_tokens=50,
+        fallback_config=fallback,
     ):
-        print(token, end="", flush=True)
-    
-    print("\n")
-    
-    # Example 4: Streaming with Anthropic (longer response)
-    print("=" * 50)
-    print("Streaming - Anthropic (claude-sonnet-4-5)")
-    print("=" * 50)
-    question = "Explain the process of photosynthesis in plants."
-    print(f"Q: {question}")
-    print("A: ", end="", flush=True)
-    
-    for token in platform.models.chat_stream(
-        model="claude-sonnet-4-5",
-        messages=[{"role": "user", "content": question}],
-        temperature=0.7,
-        max_tokens=200
-    ):
-        print(token, end="", flush=True)
-    
-    print("\n")
-    
-    print("\n✓ Done! Press Ctrl+C to stop.")
+        print(chunk.token, end="", flush=True)
+        last_model = chunk.model
+
+    print(f"\nServed by: {last_model}")
+    print()
+
+    print("\nDone! Press Ctrl+C to stop.")
     try:
         while True:
             time.sleep(1)

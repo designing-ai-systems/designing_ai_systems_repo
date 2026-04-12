@@ -5,7 +5,7 @@ import warnings
 
 from proto import sessions_pb2 as sessions__pb2
 
-GRPC_GENERATED_VERSION = '1.76.0'
+GRPC_GENERATED_VERSION = '1.80.0'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 
@@ -26,8 +26,7 @@ if _version_not_supported:
 
 
 class SessionServiceStub(object):
-    """Session Service Protocol Buffer definitions
-
+    """Listing 4.3
     """
 
     def __init__(self, channel):
@@ -37,104 +36,107 @@ class SessionServiceStub(object):
             channel: A grpc.Channel.
         """
         self.GetOrCreateSession = channel.unary_unary(
-                '/proto.SessionService/GetOrCreateSession',
+                '/sessions.SessionService/GetOrCreateSession',
                 request_serializer=sessions__pb2.GetOrCreateSessionRequest.SerializeToString,
                 response_deserializer=sessions__pb2.GetOrCreateSessionResponse.FromString,
                 _registered_method=True)
+        self.ListSessions = channel.unary_unary(
+                '/sessions.SessionService/ListSessions',
+                request_serializer=sessions__pb2.ListSessionsRequest.SerializeToString,
+                response_deserializer=sessions__pb2.ListSessionsResponse.FromString,
+                _registered_method=True)
         self.AddMessages = channel.unary_unary(
-                '/proto.SessionService/AddMessages',
+                '/sessions.SessionService/AddMessages',
                 request_serializer=sessions__pb2.AddMessagesRequest.SerializeToString,
                 response_deserializer=sessions__pb2.AddMessagesResponse.FromString,
                 _registered_method=True)
         self.GetMessages = channel.unary_unary(
-                '/proto.SessionService/GetMessages',
+                '/sessions.SessionService/GetMessages',
                 request_serializer=sessions__pb2.GetMessagesRequest.SerializeToString,
                 response_deserializer=sessions__pb2.GetMessagesResponse.FromString,
                 _registered_method=True)
         self.DeleteSession = channel.unary_unary(
-                '/proto.SessionService/DeleteSession',
+                '/sessions.SessionService/DeleteSession',
                 request_serializer=sessions__pb2.DeleteSessionRequest.SerializeToString,
                 response_deserializer=sessions__pb2.DeleteSessionResponse.FromString,
                 _registered_method=True)
         self.SaveMemory = channel.unary_unary(
-                '/proto.SessionService/SaveMemory',
+                '/sessions.SessionService/SaveMemory',
                 request_serializer=sessions__pb2.SaveMemoryRequest.SerializeToString,
                 response_deserializer=sessions__pb2.SaveMemoryResponse.FromString,
                 _registered_method=True)
         self.GetMemory = channel.unary_unary(
-                '/proto.SessionService/GetMemory',
+                '/sessions.SessionService/GetMemory',
                 request_serializer=sessions__pb2.GetMemoryRequest.SerializeToString,
                 response_deserializer=sessions__pb2.GetMemoryResponse.FromString,
                 _registered_method=True)
         self.DeleteMemory = channel.unary_unary(
-                '/proto.SessionService/DeleteMemory',
+                '/sessions.SessionService/DeleteMemory',
                 request_serializer=sessions__pb2.DeleteMemoryRequest.SerializeToString,
                 response_deserializer=sessions__pb2.DeleteMemoryResponse.FromString,
                 _registered_method=True)
         self.ClearUserMemory = channel.unary_unary(
-                '/proto.SessionService/ClearUserMemory',
+                '/sessions.SessionService/ClearUserMemory',
                 request_serializer=sessions__pb2.ClearUserMemoryRequest.SerializeToString,
                 response_deserializer=sessions__pb2.ClearUserMemoryResponse.FromString,
                 _registered_method=True)
 
 
 class SessionServiceServicer(object):
-    """Session Service Protocol Buffer definitions
-
+    """Listing 4.3
     """
 
     def GetOrCreateSession(self, request, context):
-        """Get existing session or create a new one
-        """
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ListSessions(self, request, context):
+        """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
     def AddMessages(self, request, context):
-        """Add messages to a session
-        """
+        """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
     def GetMessages(self, request, context):
-        """Get messages from a session
-        """
+        """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
     def DeleteSession(self, request, context):
-        """Delete a session
-        """
+        """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
     def SaveMemory(self, request, context):
-        """Save memory entry
+        """Memory operations
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
     def GetMemory(self, request, context):
-        """Get memory entries
-        """
+        """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
     def DeleteMemory(self, request, context):
-        """Delete a memory entry
-        """
+        """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
     def ClearUserMemory(self, request, context):
-        """Clear all memories for a user
-        """
+        """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
@@ -146,6 +148,11 @@ def add_SessionServiceServicer_to_server(servicer, server):
                     servicer.GetOrCreateSession,
                     request_deserializer=sessions__pb2.GetOrCreateSessionRequest.FromString,
                     response_serializer=sessions__pb2.GetOrCreateSessionResponse.SerializeToString,
+            ),
+            'ListSessions': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListSessions,
+                    request_deserializer=sessions__pb2.ListSessionsRequest.FromString,
+                    response_serializer=sessions__pb2.ListSessionsResponse.SerializeToString,
             ),
             'AddMessages': grpc.unary_unary_rpc_method_handler(
                     servicer.AddMessages,
@@ -184,15 +191,14 @@ def add_SessionServiceServicer_to_server(servicer, server):
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
-            'proto.SessionService', rpc_method_handlers)
+            'sessions.SessionService', rpc_method_handlers)
     server.add_generic_rpc_handlers((generic_handler,))
-    server.add_registered_method_handlers('proto.SessionService', rpc_method_handlers)
+    server.add_registered_method_handlers('sessions.SessionService', rpc_method_handlers)
 
 
  # This class is part of an EXPERIMENTAL API.
 class SessionService(object):
-    """Session Service Protocol Buffer definitions
-
+    """Listing 4.3
     """
 
     @staticmethod
@@ -209,9 +215,36 @@ class SessionService(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/proto.SessionService/GetOrCreateSession',
+            '/sessions.SessionService/GetOrCreateSession',
             sessions__pb2.GetOrCreateSessionRequest.SerializeToString,
             sessions__pb2.GetOrCreateSessionResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListSessions(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/sessions.SessionService/ListSessions',
+            sessions__pb2.ListSessionsRequest.SerializeToString,
+            sessions__pb2.ListSessionsResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -236,7 +269,7 @@ class SessionService(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/proto.SessionService/AddMessages',
+            '/sessions.SessionService/AddMessages',
             sessions__pb2.AddMessagesRequest.SerializeToString,
             sessions__pb2.AddMessagesResponse.FromString,
             options,
@@ -263,7 +296,7 @@ class SessionService(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/proto.SessionService/GetMessages',
+            '/sessions.SessionService/GetMessages',
             sessions__pb2.GetMessagesRequest.SerializeToString,
             sessions__pb2.GetMessagesResponse.FromString,
             options,
@@ -290,7 +323,7 @@ class SessionService(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/proto.SessionService/DeleteSession',
+            '/sessions.SessionService/DeleteSession',
             sessions__pb2.DeleteSessionRequest.SerializeToString,
             sessions__pb2.DeleteSessionResponse.FromString,
             options,
@@ -317,7 +350,7 @@ class SessionService(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/proto.SessionService/SaveMemory',
+            '/sessions.SessionService/SaveMemory',
             sessions__pb2.SaveMemoryRequest.SerializeToString,
             sessions__pb2.SaveMemoryResponse.FromString,
             options,
@@ -344,7 +377,7 @@ class SessionService(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/proto.SessionService/GetMemory',
+            '/sessions.SessionService/GetMemory',
             sessions__pb2.GetMemoryRequest.SerializeToString,
             sessions__pb2.GetMemoryResponse.FromString,
             options,
@@ -371,7 +404,7 @@ class SessionService(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/proto.SessionService/DeleteMemory',
+            '/sessions.SessionService/DeleteMemory',
             sessions__pb2.DeleteMemoryRequest.SerializeToString,
             sessions__pb2.DeleteMemoryResponse.FromString,
             options,
@@ -398,7 +431,7 @@ class SessionService(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/proto.SessionService/ClearUserMemory',
+            '/sessions.SessionService/ClearUserMemory',
             sessions__pb2.ClearUserMemoryRequest.SerializeToString,
             sessions__pb2.ClearUserMemoryResponse.FromString,
             options,
