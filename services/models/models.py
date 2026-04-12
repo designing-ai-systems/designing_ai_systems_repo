@@ -111,19 +111,19 @@ class ResponseFormat:
 @dataclass
 class RetryConfig:
     max_retries: int = 3
-    base_delay: float = 1.0
+    initial_delay: float = 1.0
+    exponential_backoff: bool = True
     max_delay: float = 60.0
-    exponential_base: float = 2.0
-    retryable_errors: List[str] = field(
-        default_factory=lambda: ["rate_limit", "server_error", "timeout"]
-    )
+    retry_on: Optional[List[str]] = None
 
 
 # Listing 3.12
 @dataclass
 class FallbackConfig:
-    models: List[str] = field(default_factory=list)
-    timeout_per_model: float = 30.0
+    enabled: bool = True
+    providers: Optional[List[str]] = None
+    retry_config: Optional[RetryConfig] = None
+    fail_on: Optional[List[str]] = None
 
 
 # Listing 3.13

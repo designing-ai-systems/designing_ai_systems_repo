@@ -11,18 +11,24 @@ Book: "Designing AI Systems" (https://www.manning.com/books/designing-ai-systems
 """
 
 import json
+import logging
 from typing import Any, Dict, Iterator, List, Optional
+
+import grpc
 
 from proto import models_pb2, models_pb2_grpc
 from services.models.models import (
     ChatChunk,
     ChatResponse,
+    FallbackConfig,
     ModelCapability,
     ModelInfo,
     TokenUsage,
 )
 
 from .base import BaseClient
+
+logger = logging.getLogger(__name__)
 
 
 class ModelClient(BaseClient):
@@ -43,49 +49,44 @@ class ModelClient(BaseClient):
         tools: Optional[List[Dict[str, Any]]] = None,
         response_format: Optional[str] = None,
         system_prompt_name: Optional[str] = None,
+        fallback_config: Optional[FallbackConfig] = None,
         **kwargs,
     ) -> ChatResponse:
         """Generate a chat response. Returns ChatResponse dataclass.
 
+        When *fallback_config* is provided and enabled, the client will
+        iterate through ``fallback_config.providers`` on RPC failure,
+        transparently retrying with alternative models.
+
         Example:
             response = platform.models.chat(
-                model="gpt-4o",
+                model="claude-sonnet-4-5",
                 messages=[{"role": "user", "content": "Hello!"}],
+                fallback_config=FallbackConfig(
+                    providers=["gpt-4o"],
+                ),
             )
             print(response.content)
         """
-        pb_messages = [self._dict_to_proto_msg(m) for m in messages]
-        config = models_pb2.ChatConfig(temperature=temperature)
-        if max_tokens:
-            config.max_tokens = max_tokens
+        models_to_try = self._build_model_chain(model, fallback_config)
+        last_error: Optional[Exception] = None
 
-        request = models_pb2.ChatRequest(
-            model=model,
-            messages=pb_messages,
-            config=config,
-        )
-        if system_prompt_name:
-            request.system_prompt_name = system_prompt_name
-        if tools:
-            for t in tools:
-                func = t.get("function", {})
-                request.tools.append(
-                    models_pb2.ToolDefinition(
-                        type=t.get("type", "function"),
-                        function=models_pb2.FunctionDef(
-                            name=func.get("name", ""),
-                            description=func.get("description", ""),
-                            parameters_json=json.dumps(func.get("parameters", {})),
-                        ),
-                    )
-                )
-        if response_format:
-            request.response_format.CopyFrom(
-                models_pb2.ResponseFormat(type=response_format)
+        for try_model in models_to_try:
+            request = self._build_chat_request(
+                try_model, messages, temperature, max_tokens,
+                tools, response_format, system_prompt_name,
             )
+            try:
+                resp = self._stub.Chat(request, metadata=self._metadata)
+                return self._proto_to_chat_response(resp)
+            except grpc.RpcError as e:
+                last_error = e
+                if self._should_fail_fast(e, fallback_config):
+                    raise
+                logger.warning("chat failed for model %s: %s", try_model, e)
+                continue
 
-        resp = self._stub.Chat(request, metadata=self._metadata)
-        return self._proto_to_chat_response(resp)
+        raise last_error
 
     def chat_stream(
         self,
@@ -93,42 +94,59 @@ class ModelClient(BaseClient):
         messages: List[Dict[str, Any]],
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
+        fallback_config: Optional[FallbackConfig] = None,
         **kwargs,
     ) -> Iterator[ChatChunk]:
         """Stream a chat response. Yields ChatChunk dataclasses.
 
+        Supports the same *fallback_config* as :meth:`chat`.
+
         Example:
             for chunk in platform.models.chat_stream(
-                model="gpt-4o",
+                model="claude-sonnet-4-5",
                 messages=[{"role": "user", "content": "Hello"}],
+                fallback_config=FallbackConfig(providers=["gpt-4o"]),
             ):
                 print(chunk.token, end="", flush=True)
         """
-        pb_messages = [self._dict_to_proto_msg(m) for m in messages]
-        config = models_pb2.ChatConfig(temperature=temperature)
-        if max_tokens:
-            config.max_tokens = max_tokens
+        models_to_try = self._build_model_chain(model, fallback_config)
+        last_error: Optional[Exception] = None
 
-        request = models_pb2.ChatRequest(
-            model=model,
-            messages=pb_messages,
-            config=config,
-        )
+        for try_model in models_to_try:
+            pb_messages = [self._dict_to_proto_msg(m) for m in messages]
+            config = models_pb2.ChatConfig(temperature=temperature)
+            if max_tokens:
+                config.max_tokens = max_tokens
 
-        for chunk in self._stub.ChatStream(request, metadata=self._metadata):
-            usage = None
-            if chunk.HasField("usage"):
-                usage = TokenUsage(
-                    prompt_tokens=chunk.usage.prompt_tokens,
-                    completion_tokens=chunk.usage.completion_tokens,
-                    total_tokens=chunk.usage.total_tokens,
-                )
-            yield ChatChunk(
-                token=chunk.token,
-                model=chunk.model,
-                finish_reason=chunk.finish_reason if chunk.HasField("finish_reason") else None,
-                usage=usage,
+            request = models_pb2.ChatRequest(
+                model=try_model,
+                messages=pb_messages,
+                config=config,
             )
+            try:
+                for chunk in self._stub.ChatStream(request, metadata=self._metadata):
+                    usage = None
+                    if chunk.HasField("usage"):
+                        usage = TokenUsage(
+                            prompt_tokens=chunk.usage.prompt_tokens,
+                            completion_tokens=chunk.usage.completion_tokens,
+                            total_tokens=chunk.usage.total_tokens,
+                        )
+                    yield ChatChunk(
+                        token=chunk.token,
+                        model=chunk.model,
+                        finish_reason=chunk.finish_reason if chunk.HasField("finish_reason") else None,
+                        usage=usage,
+                    )
+                return  # stream completed successfully
+            except grpc.RpcError as e:
+                last_error = e
+                if self._should_fail_fast(e, fallback_config):
+                    raise
+                logger.warning("chat_stream failed for model %s: %s", try_model, e)
+                continue
+
+        raise last_error
 
     # ==================== Discovery ====================
 
@@ -265,6 +283,75 @@ class ModelClient(BaseClient):
             "last_checked": status.last_checked,
             "endpoint": status.endpoint,
         }
+
+    # ==================== Fallback Helpers ====================
+
+    @staticmethod
+    def _build_model_chain(
+        primary: str, fallback_config: Optional[FallbackConfig]
+    ) -> List[str]:
+        """Return the ordered list of models to try: [primary, *fallbacks]."""
+        if (
+            fallback_config is None
+            or not fallback_config.enabled
+            or not fallback_config.providers
+        ):
+            return [primary]
+        return [primary] + list(fallback_config.providers)
+
+    @staticmethod
+    def _should_fail_fast(
+        error: grpc.RpcError, fallback_config: Optional[FallbackConfig]
+    ) -> bool:
+        """Return True if the error should skip fallbacks entirely."""
+        if fallback_config is None or not fallback_config.enabled:
+            return True
+        if fallback_config.fail_on:
+            code_name = error.code().name
+            if code_name in fallback_config.fail_on:
+                return True
+        return False
+
+    def _build_chat_request(
+        self,
+        model: str,
+        messages: List[Dict[str, Any]],
+        temperature: float,
+        max_tokens: Optional[int],
+        tools: Optional[List[Dict[str, Any]]],
+        response_format: Optional[str],
+        system_prompt_name: Optional[str],
+    ) -> models_pb2.ChatRequest:
+        pb_messages = [self._dict_to_proto_msg(m) for m in messages]
+        config = models_pb2.ChatConfig(temperature=temperature)
+        if max_tokens:
+            config.max_tokens = max_tokens
+
+        request = models_pb2.ChatRequest(
+            model=model,
+            messages=pb_messages,
+            config=config,
+        )
+        if system_prompt_name:
+            request.system_prompt_name = system_prompt_name
+        if tools:
+            for t in tools:
+                func = t.get("function", {})
+                request.tools.append(
+                    models_pb2.ToolDefinition(
+                        type=t.get("type", "function"),
+                        function=models_pb2.FunctionDef(
+                            name=func.get("name", ""),
+                            description=func.get("description", ""),
+                            parameters_json=json.dumps(func.get("parameters", {})),
+                        ),
+                    )
+                )
+        if response_format:
+            request.response_format.CopyFrom(
+                models_pb2.ResponseFormat(type=response_format)
+            )
+        return request
 
     # ==================== Conversion Helpers ====================
 

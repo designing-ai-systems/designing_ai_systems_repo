@@ -137,13 +137,29 @@ class TestRetryConfig:
     def test_defaults(self):
         cfg = RetryConfig()
         assert cfg.max_retries == 3
-        assert cfg.base_delay == 1.0
+        assert cfg.initial_delay == 1.0
+        assert cfg.exponential_backoff is True
+        assert cfg.max_delay == 60.0
+        assert cfg.retry_on is None
 
 
 class TestFallbackConfig:
-    def test_chain(self):
-        cfg = FallbackConfig(models=["gpt-4o", "gpt-4o-mini"])
-        assert len(cfg.models) == 2
+    def test_defaults(self):
+        cfg = FallbackConfig()
+        assert cfg.enabled is True
+        assert cfg.providers is None
+        assert cfg.retry_config is None
+        assert cfg.fail_on is None
+
+    def test_with_providers_and_retry(self):
+        cfg = FallbackConfig(
+            providers=["claude-sonnet-4-5", "gpt-4o"],
+            retry_config=RetryConfig(max_retries=2),
+            fail_on=["authentication_error"],
+        )
+        assert len(cfg.providers) == 2
+        assert cfg.retry_config.max_retries == 2
+        assert cfg.fail_on == ["authentication_error"]
 
 
 class TestRoutingConfig:
