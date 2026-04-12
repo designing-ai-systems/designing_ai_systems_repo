@@ -53,7 +53,7 @@ def test_session_management(platform):
     session1 = platform.sessions.get_or_create("patient-123")
     print(f"   ✓ Created session: {session1.session_id}")
     print(f"   - User ID: {session1.user_id}")
-    print(f"   - Created at: {datetime.fromtimestamp(session1.created_at / 1000)}")
+    print(f"   - Created at: {session1.created_at}")
     
     # Test 2: Retrieve existing session
     print("\n2. Retrieving same session...")
@@ -131,13 +131,13 @@ def test_message_operations(platform, session_id):
     # Display message summary
     print("\n   Message summary:")
     for i, msg in enumerate(all_messages, 1):
-        role = msg['role']
-        if msg.get('content'):
-            content_preview = msg['content'][:50] + "..." if len(msg['content']) > 50 else msg['content']
+        role = msg.role
+        if msg.content:
+            content_preview = msg.content[:50] + "..." if len(msg.content) > 50 else msg.content
             print(f"   {i}. [{role}] {content_preview}")
-        elif msg.get('tool_calls'):
-            tc = msg['tool_calls'][0]
-            print(f"   {i}. [{role}] Tool call: {tc['function']['name']}")
+        elif msg.tool_calls:
+            tc = msg.tool_calls[0]
+            print(f"   {i}. [{role}] Tool call: {tc.function.name}")
         else:
             print(f"   {i}. [{role}] (no content)")
     

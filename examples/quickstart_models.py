@@ -61,6 +61,37 @@ def main():
         print("No providers configured. Set ANTHROPIC_API_KEY or OPENAI_API_KEY in .env")
         sys.exit(1)
 
+    # --- Example 2: Test both providers if both keys exist ---
+    if "anthropic" in providers and "openai" in providers:
+        print("=" * 50)
+        print("Testing both providers (both API keys detected)")
+        print("=" * 50)
+        
+        test_question = "Say 'Hello' in one word."
+        
+        # Test Anthropic
+        print("\n[Anthropic]")
+        resp = platform.models.chat(
+            model="claude-sonnet-4-5",
+            messages=[{"role": "user", "content": test_question}],
+            max_tokens=10,
+        )
+        print(f"  Response: {resp.content}")
+        print(f"  Model: {resp.model}")
+        
+        # Test OpenAI
+        print("\n[OpenAI]")
+        resp = platform.models.chat(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": test_question}],
+            max_tokens=10,
+        )
+        print(f"  Response: {resp.content}")
+        print(f"  Model: {resp.model}")
+        print("\n✓ Both providers working!\n")
+    else:
+        print(f"Only {', '.join(providers)} configured. Set both keys to test multi-provider support.\n")
+
     # --- Configure fallback: Anthropic primary, OpenAI fallback ---
     fallback = FallbackConfig(
         providers=["gpt-4o"],
@@ -68,7 +99,7 @@ def main():
     )
     primary_model = "claude-sonnet-4-5"
 
-    # --- Example 2: Chat with fallback ---
+    # --- Example 3: Chat with fallback ---
     print("=" * 50)
     print(f"Chat with fallback (primary={primary_model}, fallback=gpt-4o)")
     print("=" * 50)
@@ -89,7 +120,7 @@ def main():
         print(f"Tokens: {response.usage.total_tokens}")
     print()
 
-    # --- Example 3: Streaming with fallback ---
+    # --- Example 4: Streaming with fallback ---
     print("=" * 50)
     print(f"Streaming with fallback (primary={primary_model}, fallback=gpt-4o)")
     print("=" * 50)
