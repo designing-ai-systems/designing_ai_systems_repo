@@ -1,22 +1,22 @@
 """Tests for Model Service domain models (book Listings 3.2-3.4, 3.11-3.15)."""
 
 from services.models.models import (
-    ChatMessage,
-    ChatConfig,
-    ChatResponse,
+    CacheConfig,
     ChatChunk,
-    TokenUsage,
+    ChatConfig,
+    ChatMessage,
+    ChatResponse,
+    FallbackConfig,
+    FunctionDefinition,
     ModelCapability,
     ModelInfo,
-    ToolDefinition,
-    FunctionDefinition,
+    RateLimitConfig,
+    RequestMetrics,
     ResponseFormat,
     RetryConfig,
-    FallbackConfig,
     RoutingConfig,
-    RateLimitConfig,
-    CacheConfig,
-    RequestMetrics,
+    TokenUsage,
+    ToolDefinition,
 )
 
 
@@ -70,11 +70,13 @@ class TestChatResponse:
             model="gpt-4o",
             provider="openai",
             finish_reason="tool_calls",
-            tool_calls=[{
-                "id": "call_1",
-                "type": "function",
-                "function": {"name": "search", "arguments": "{}"},
-            }],
+            tool_calls=[
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "search", "arguments": "{}"},
+                }
+            ],
         )
         assert resp.finish_reason == "tool_calls"
         assert len(resp.tool_calls) == 1

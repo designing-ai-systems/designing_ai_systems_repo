@@ -57,7 +57,7 @@ class PromptRegistry:
 class ModelRegistry:
     """
     In-memory registry for custom/self-hosted models.
-    
+
     This registry is ONLY for custom models (not commercial providers).
     Commercial models (OpenAI, Anthropic) are handled by provider adapters.
     """
@@ -76,7 +76,7 @@ class ModelRegistry:
     ) -> models_pb2.RegisteredModel:
         """
         Register a custom model.
-        
+
         Args:
             name: Model identifier
             endpoint: HTTP endpoint where model is hosted

@@ -7,32 +7,32 @@ Provides access to all platform services through a unified interface.
 import os
 from typing import Optional
 
-from .clients.sessions import SessionClient
-from .clients.models import ModelClient
 from .clients.data import DataClient
-from .clients.guardrails import GuardrailsClient
-from .clients.tools import ToolClient
 from .clients.evaluation import EvaluationClient
+from .clients.guardrails import GuardrailsClient
+from .clients.models import ModelClient
+from .clients.sessions import SessionClient
+from .clients.tools import ToolClient
 
 
 class GenAIPlatform:
     """
     Main platform SDK entry point.
-    
+
     Provides lazy-initialized access to all platform services.
     Services are initialized on first access to avoid unnecessary
     network connections.
-    
+
     Example:
         platform = GenAIPlatform()
         session = platform.sessions.get_or_create(user_id="user-123")
         response = platform.models.chat(model="gpt-4o", query="Hello")
     """
-    
+
     def __init__(self, gateway_url: Optional[str] = None):
         """
         Initialize the platform SDK.
-        
+
         Args:
             gateway_url: Optional explicit gateway URL. If not provided,
                        checks GENAI_GATEWAY_URL environment variable.
@@ -42,7 +42,7 @@ class GenAIPlatform:
             self.gateway_url = gateway_url
         else:
             self.gateway_url = os.getenv("GENAI_GATEWAY_URL", "localhost:50051")
-        
+
         # Lazy initialization - clients created on first access
         self._sessions = None
         self._models = None
@@ -50,46 +50,45 @@ class GenAIPlatform:
         self._guardrails = None
         self._tools = None
         self._evaluation = None
-    
+
     @property
     def sessions(self) -> SessionClient:
         """Access the Session Service client."""
         if self._sessions is None:
             self._sessions = SessionClient(self)
         return self._sessions
-    
+
     @property
     def models(self) -> ModelClient:
         """Access the Model Service client."""
         if self._models is None:
             self._models = ModelClient(self)
         return self._models
-    
+
     @property
     def data(self) -> DataClient:
         """Access the Data Service client."""
         if self._data is None:
             self._data = DataClient(self)
         return self._data
-    
+
     @property
     def guardrails(self) -> GuardrailsClient:
         """Access the Guardrails Service client."""
         if self._guardrails is None:
             self._guardrails = GuardrailsClient(self)
         return self._guardrails
-    
+
     @property
     def tools(self) -> ToolClient:
         """Access the Tool Service client."""
         if self._tools is None:
             self._tools = ToolClient(self)
         return self._tools
-    
+
     @property
     def evaluation(self) -> EvaluationClient:
         """Access the Evaluation Service client."""
         if self._evaluation is None:
             self._evaluation = EvaluationClient(self)
         return self._evaluation
-

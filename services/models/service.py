@@ -28,12 +28,9 @@ from services.models.models import (
     ChatConfig,
     ChatMessage,
     ChatResponse,
-    ModelCapability,
-    ModelInfo,
+    FunctionDefinition,
     ResponseFormat,
     ToolDefinition,
-    FunctionDefinition,
-    TokenUsage,
 )
 from services.models.providers import AnthropicProvider, ModelProvider, OpenAIProvider
 from services.models.store import ModelRegistry, PromptRegistry
@@ -41,7 +38,6 @@ from services.shared.servicer_base import BaseServicer
 
 
 class ModelService(models_pb2_grpc.ModelServiceServicer, BaseServicer):
-
     def __init__(self):
         self._providers: Dict[str, ModelProvider] = {}
         self._initialize_providers()
@@ -86,7 +82,8 @@ class ModelService(models_pb2_grpc.ModelServiceServicer, BaseServicer):
         )
 
     def _proto_tools_to_domain(
-        self, proto_tools,
+        self,
+        proto_tools,
     ) -> Optional[List[ToolDefinition]]:
         if not proto_tools:
             return None
@@ -314,9 +311,7 @@ class ModelService(models_pb2_grpc.ModelServiceServicer, BaseServicer):
         )
 
     def ListRegisteredModels(self, request, context) -> models_pb2.ListRegisteredModelsResponse:
-        return models_pb2.ListRegisteredModelsResponse(
-            models=self._model_registry.list_all()
-        )
+        return models_pb2.ListRegisteredModelsResponse(models=self._model_registry.list_all())
 
     def GetModelStatus(self, request, context) -> models_pb2.ModelStatus:
         model = self._model_registry.get(request.name)

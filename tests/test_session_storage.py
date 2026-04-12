@@ -1,7 +1,8 @@
 """Tests for InMemorySessionStorage (book Listing 4.8 + 4.20 interface)."""
 
 import pytest
-from services.sessions.models import Message, Session, MemoryEntry
+
+from services.sessions.models import Message, Session
 from services.sessions.store import InMemorySessionStorage
 
 

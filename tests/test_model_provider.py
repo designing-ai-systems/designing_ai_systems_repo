@@ -1,11 +1,12 @@
 """Tests for ModelProvider ABC and adapter interfaces."""
 
 import pytest
+
 from services.models.models import (
+    ChatChunk,
     ChatConfig,
     ChatMessage,
     ChatResponse,
-    ChatChunk,
     ModelInfo,
 )
 from services.models.providers.base import ModelProvider
@@ -17,7 +18,9 @@ class StubProvider(ModelProvider):
     def chat(self, model, messages, config, tools=None, response_format=None, system_prompt=None):
         return ChatResponse(content="stub reply", model=model, provider="stub")
 
-    def chat_stream(self, model, messages, config, tools=None, response_format=None, system_prompt=None):
+    def chat_stream(
+        self, model, messages, config, tools=None, response_format=None, system_prompt=None
+    ):
         yield ChatChunk(token="chunk", model=model)
         yield ChatChunk(token="", model=model, finish_reason="stop")
 

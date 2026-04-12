@@ -8,14 +8,13 @@ Book: "Designing AI Systems" (https://www.manning.com/books/designing-ai-systems
   - Listing 4.20: Memory methods added to SessionStorage ABC
 """
 
-import json
 import os
 import uuid
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
-from services.sessions.models import Message, MemoryEntry, Session
+from services.sessions.models import Message, Session
 
 
 class SessionStorage(ABC):
@@ -26,9 +25,7 @@ class SessionStorage(ABC):
     """
 
     @abstractmethod
-    def get_or_create_session(
-        self, user_id: str, session_id: Optional[str] = None
-    ) -> Session:
+    def get_or_create_session(self, user_id: str, session_id: Optional[str] = None) -> Session:
         """Retrieve existing session or create new one."""
         pass
 
@@ -79,9 +76,7 @@ class SessionStorage(ABC):
         pass
 
     @abstractmethod
-    def delete_memory(
-        self, user_id: str, key: str, session_id: Optional[str] = None
-    ) -> bool:
+    def delete_memory(self, user_id: str, key: str, session_id: Optional[str] = None) -> bool:
         """Remove a fact from memory. Returns True if key existed."""
         pass
 
@@ -99,9 +94,7 @@ class InMemorySessionStorage(SessionStorage):
         self._messages: Dict[str, List[Message]] = {}
         self._memories: Dict[tuple, Any] = {}
 
-    def get_or_create_session(
-        self, user_id: str, session_id: Optional[str] = None
-    ) -> Session:
+    def get_or_create_session(self, user_id: str, session_id: Optional[str] = None) -> Session:
         if session_id and session_id in self._sessions:
             return self._sessions[session_id]
 
@@ -178,9 +171,7 @@ class InMemorySessionStorage(SessionStorage):
             results[mk] = value
         return results
 
-    def delete_memory(
-        self, user_id: str, key: str, session_id: Optional[str] = None
-    ) -> bool:
+    def delete_memory(self, user_id: str, key: str, session_id: Optional[str] = None) -> bool:
         mem_key = (user_id, key, session_id or "")
         if mem_key in self._memories:
             del self._memories[mem_key]

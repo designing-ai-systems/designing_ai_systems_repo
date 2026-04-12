@@ -9,8 +9,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from services.shared.server import create_grpc_server, run_service, get_service_port
 from services.models.service import ModelService
+from services.shared.server import create_grpc_server, get_service_port, run_service
 
 
 def load_env_file(env_path: Path) -> None:

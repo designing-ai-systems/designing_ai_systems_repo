@@ -1,7 +1,8 @@
 """Tests for Session Service domain models (book Listings 4.1, 4.2, 4.19)."""
 
 from datetime import datetime
-from services.sessions.models import Message, ToolCall, Function, Session, MemoryEntry
+
+from services.sessions.models import Function, MemoryEntry, Message, Session, ToolCall
 
 
 class TestMessage:
