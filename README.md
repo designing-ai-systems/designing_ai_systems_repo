@@ -4,6 +4,7 @@ Production-ready platform for building GenAI applications with multi-provider su
 
 ## Features
 
+
 - **Multi-provider inference**: OpenAI, Anthropic (with streaming)
 - **Session management**: Conversation history and model-managed memory
 - **Domain dataclasses**: Clean Python API -- never exposes Protocol Buffers
