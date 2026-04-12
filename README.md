@@ -1,4 +1,4 @@
-# GenAI Platform
+# Designing AI systems repository
 
 Production-ready platform for building GenAI applications with multi-provider support. Accompanies the book [**Designing AI Systems**](https://www.manning.com/books/designing-ai-systems) (Manning).
 
