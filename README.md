@@ -12,11 +12,15 @@ Production-ready platform for building GenAI applications with multi-provider su
 - **Storage abstraction**: In-memory (dev) or PostgreSQL (production)
 - **Service architecture**: gRPC microservices with unified API Gateway
 
+## Requirements
+
+- **Python 3.12+** (macOS: `brew install python@3.12`)
+
 ## Setup
 
 ```bash
-# 1. Create virtual environment
-python3 -m venv .venv
+# 1. Create virtual environment (use Python 3.12)
+python3.12 -m venv .venv
 source .venv/bin/activate
 
 # 2. Install
@@ -31,6 +35,10 @@ python -m proto.generate
 
 # 5. Run tests
 pytest tests/ -v
+
+# 6. Lint (runs in CI on every PR)
+ruff check .
+ruff format --check .
 ```
 
 ### Optional: PostgreSQL storage

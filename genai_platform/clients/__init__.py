@@ -1,11 +1,11 @@
 """Service clients for platform services."""
 
-from .sessions import SessionClient
-from .models import ModelClient
 from .data import DataClient
-from .guardrails import GuardrailsClient
-from .tools import ToolClient
 from .evaluation import EvaluationClient
+from .guardrails import GuardrailsClient
+from .models import ModelClient
+from .sessions import SessionClient
+from .tools import ToolClient
 
 __all__ = [
     "SessionClient",
@@ -15,4 +15,3 @@ __all__ = [
     "ToolClient",
     "EvaluationClient",
 ]
-

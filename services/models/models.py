@@ -20,8 +20,8 @@ Book: "Designing AI Systems" (https://www.manning.com/books/designing-ai-systems
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-
 # --- Core chat types (Listings 3.1-3.4) ---
+
 
 @dataclass
 class ChatMessage:
@@ -69,6 +69,7 @@ class ChatChunk:
 
 # --- Model discovery (Listing 3.2) ---
 
+
 @dataclass
 class ModelCapability:
     context_window: int = 0
@@ -86,6 +87,7 @@ class ModelInfo:
 
 
 # --- Tool definitions ---
+
 
 @dataclass
 class FunctionDefinition:
@@ -106,6 +108,7 @@ class ResponseFormat:
 
 
 # --- Operational configs (Listings 3.11-3.16) ---
+
 
 # Listing 3.11
 @dataclass

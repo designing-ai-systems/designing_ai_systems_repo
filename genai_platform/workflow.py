@@ -6,7 +6,7 @@ functions as workflows that can be deployed as independent services.
 """
 
 from functools import wraps
-from typing import Callable, Any, Optional, Dict
+from typing import Any, Callable, Dict, Optional
 
 
 def workflow(
@@ -14,15 +14,15 @@ def workflow(
     api_path: str,
     response_mode: str = "sync",
     autoscaling_config: Optional[Dict[str, Any]] = None,
-    deployment_config: Optional[Dict[str, Any]] = None
+    deployment_config: Optional[Dict[str, Any]] = None,
 ) -> Callable:
     """
     Decorator for defining AI workflows.
-    
+
     Workflows are functions that get deployed as independent containerized
     services. The decorator captures deployment configuration that the
     deployment tool uses to package and register workflows.
-    
+
     Args:
         name: Unique workflow identifier
         api_path: API endpoint path where this workflow is exposed
@@ -50,7 +50,7 @@ def workflow(
             - max_retries: Maximum retry attempts for failed requests
             - labels: Dict of labels for observability/tagging
             Any additional keys will be passed through to the deployment system.
-    
+
     Example:
         # Simple workflow with defaults
         @workflow(
@@ -61,7 +61,7 @@ def workflow(
             platform = GenAIPlatform()
             # ... workflow logic ...
             return {"response": "..."}
-        
+
         # Workflow with custom autoscaling
         @workflow(
             name="high_traffic_service",
@@ -75,7 +75,7 @@ def workflow(
         def handle_request(data):
             # ... handle request ...
             pass
-        
+
         # GPU-enabled workflow for model inference
         @workflow(
             name="model_inference",
@@ -90,42 +90,34 @@ def workflow(
         def run_inference(input_data):
             # ... GPU-accelerated inference ...
             pass
-        
+
     """
+
     def decorator(func: Callable) -> Callable:
         @wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
             # The wrapper just calls the original function
             # The decorator doesn't change behavior, just adds metadata
             return func(*args, **kwargs)
-        
+
         # Build deployment metadata
-        metadata = {
-            "name": name,
-            "api_path": api_path,
-            "response_mode": response_mode
-        }
-        
+        metadata = {"name": name, "api_path": api_path, "response_mode": response_mode}
+
         # Set up autoscaling config - merge user config with defaults
-        default_autoscaling = {
-            "min_replicas": 1,
-            "max_replicas": 10,
-            "target_ongoing_requests": 10
-        }
+        default_autoscaling = {"min_replicas": 1, "max_replicas": 10, "target_ongoing_requests": 10}
         if autoscaling_config:
             # Merge user config over defaults
             metadata["autoscaling"] = {**default_autoscaling, **autoscaling_config}
         else:
             metadata["autoscaling"] = default_autoscaling
-        
+
         # Add deployment config if provided
         if deployment_config:
             metadata["deployment_config"] = deployment_config
-        
+
         # Attach deployment metadata to the function
         wrapper._workflow_metadata = metadata
-        
-        return wrapper
-    
-    return decorator
 
+        return wrapper
+
+    return decorator

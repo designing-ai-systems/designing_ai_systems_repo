@@ -10,16 +10,16 @@ Book: "Designing AI Systems" (https://www.manning.com/books/designing-ai-systems
 """
 
 import sys
-import time
 import threading
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from genai_platform import GenAIPlatform
-from services.sessions.main import main as start_session_service
-from services.models.main import main as start_model_service
 from services.gateway.main import main as start_gateway
+from services.models.main import main as start_model_service
+from services.sessions.main import main as start_session_service
 
 
 def start_service_in_thread(service_func, service_name):
@@ -28,6 +28,7 @@ def start_service_in_thread(service_func, service_name):
             service_func()
         except KeyboardInterrupt:
             pass
+
     thread = threading.Thread(target=run_service, daemon=True, name=service_name)
     thread.start()
     return thread
@@ -51,10 +52,13 @@ def chat_with_history(platform, session_id: str, question: str, model: str = "gp
     answer = "".join(answer_parts)
     print()
 
-    platform.sessions.add_messages(session_id, [
-        {"role": "user", "content": question},
-        {"role": "assistant", "content": answer},
-    ])
+    platform.sessions.add_messages(
+        session_id,
+        [
+            {"role": "user", "content": question},
+            {"role": "assistant", "content": answer},
+        ],
+    )
     return answer
 
 
@@ -92,9 +96,7 @@ if __name__ == "__main__":
     # Follow-up -- tests context retention
     print("Q: Where am I coming from?")
     print("A: ", end="", flush=True)
-    answer = chat_with_history(
-        platform, session.session_id, "Where am I coming from?"
-    )
+    answer = chat_with_history(platform, session.session_id, "Where am I coming from?")
     print()
 
     if "canada" in answer.lower():

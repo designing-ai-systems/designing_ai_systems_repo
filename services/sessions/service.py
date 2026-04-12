@@ -11,6 +11,7 @@ Book: "Designing AI Systems" (https://www.manning.com/books/designing-ai-systems
 import json
 
 import grpc
+
 from proto import sessions_pb2, sessions_pb2_grpc
 from services.sessions.models import Function, Message, ToolCall
 from services.sessions.store import SessionStorage, create_storage
@@ -18,7 +19,6 @@ from services.shared.servicer_base import BaseServicer
 
 
 class SessionService(sessions_pb2_grpc.SessionServiceServicer, BaseServicer):
-
     def __init__(self, storage: SessionStorage = None):
         self.storage = storage or create_storage()
 
@@ -47,11 +47,7 @@ class SessionService(sessions_pb2_grpc.SessionServiceServicer, BaseServicer):
             role=proto_msg.role,
             content=proto_msg.content if proto_msg.HasField("content") else None,
             tool_calls=tool_calls,
-            tool_call_id=(
-                proto_msg.tool_call_id
-                if proto_msg.HasField("tool_call_id")
-                else None
-            ),
+            tool_call_id=(proto_msg.tool_call_id if proto_msg.HasField("tool_call_id") else None),
         )
 
     def _domain_msg_to_proto(self, msg: Message) -> sessions_pb2.Message:
@@ -82,9 +78,7 @@ class SessionService(sessions_pb2_grpc.SessionServiceServicer, BaseServicer):
 
     def GetOrCreateSession(self, request, context):
         try:
-            session_id = (
-                request.session_id if request.HasField("session_id") else None
-            )
+            session_id = request.session_id if request.HasField("session_id") else None
             session = self.storage.get_or_create_session(
                 user_id=request.user_id, session_id=session_id
             )
@@ -139,9 +133,7 @@ class SessionService(sessions_pb2_grpc.SessionServiceServicer, BaseServicer):
                 session_id=request.session_id, limit=limit, offset=offset
             )
             proto_msgs = [self._domain_msg_to_proto(m) for m in messages]
-            return sessions_pb2.GetMessagesResponse(
-                messages=proto_msgs, total_count=total_count
-            )
+            return sessions_pb2.GetMessagesResponse(messages=proto_msgs, total_count=total_count)
         except Exception as e:
             context.set_code(grpc.StatusCode.INTERNAL)
             context.set_details(f"Failed to get messages: {e}")
@@ -160,9 +152,7 @@ class SessionService(sessions_pb2_grpc.SessionServiceServicer, BaseServicer):
 
     def SaveMemory(self, request, context):
         try:
-            session_id = (
-                request.session_id if request.HasField("session_id") else None
-            )
+            session_id = request.session_id if request.HasField("session_id") else None
             success = self.storage.save_memory(
                 user_id=request.user_id,
                 key=request.key,
@@ -178,9 +168,7 @@ class SessionService(sessions_pb2_grpc.SessionServiceServicer, BaseServicer):
     def GetMemory(self, request, context):
         try:
             key = request.key if request.HasField("key") else None
-            session_id = (
-                request.session_id if request.HasField("session_id") else None
-            )
+            session_id = request.session_id if request.HasField("session_id") else None
             memories = self.storage.get_memory(
                 user_id=request.user_id, key=key, session_id=session_id
             )
@@ -193,9 +181,7 @@ class SessionService(sessions_pb2_grpc.SessionServiceServicer, BaseServicer):
 
     def DeleteMemory(self, request, context):
         try:
-            session_id = (
-                request.session_id if request.HasField("session_id") else None
-            )
+            session_id = request.session_id if request.HasField("session_id") else None
             success = self.storage.delete_memory(
                 user_id=request.user_id, key=request.key, session_id=session_id
             )

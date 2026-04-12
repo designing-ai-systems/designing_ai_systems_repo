@@ -4,19 +4,15 @@ Tests for client-side fallback logic in ModelClient.
 RED/GREEN TDD: These tests are written first and must FAIL before implementation.
 """
 
-import grpc
-from unittest.mock import MagicMock, patch, PropertyMock
-from dataclasses import dataclass
+from unittest.mock import MagicMock, patch
 
+import grpc
 import pytest
 
+from genai_platform.clients.models import ModelClient
 from services.models.models import (
     FallbackConfig,
-    RetryConfig,
-    ChatResponse,
-    TokenUsage,
 )
-from genai_platform.clients.models import ModelClient
 
 
 def _make_proto_response(content="Hello", model="gpt-4o", provider="openai"):

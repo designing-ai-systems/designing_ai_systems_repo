@@ -8,7 +8,6 @@ Book: "Designing AI Systems" (https://www.manning.com/books/designing-ai-systems
 
 from __future__ import annotations
 
-import json
 from typing import Iterator, List, Optional
 
 from openai import OpenAI

@@ -73,8 +73,13 @@ class ModelClient(BaseClient):
 
         for try_model in models_to_try:
             request = self._build_chat_request(
-                try_model, messages, temperature, max_tokens,
-                tools, response_format, system_prompt_name,
+                try_model,
+                messages,
+                temperature,
+                max_tokens,
+                tools,
+                response_format,
+                system_prompt_name,
             )
             try:
                 resp = self._stub.Chat(request, metadata=self._metadata)
@@ -135,7 +140,9 @@ class ModelClient(BaseClient):
                     yield ChatChunk(
                         token=chunk.token,
                         model=chunk.model,
-                        finish_reason=chunk.finish_reason if chunk.HasField("finish_reason") else None,
+                        finish_reason=chunk.finish_reason
+                        if chunk.HasField("finish_reason")
+                        else None,
                         usage=usage,
                     )
                 return  # stream completed successfully
@@ -152,9 +159,7 @@ class ModelClient(BaseClient):
 
     def list_models(self) -> List[ModelInfo]:
         """List available models. Returns list of ModelInfo dataclasses."""
-        resp = self._stub.ListModels(
-            models_pb2.ListModelsRequest(), metadata=self._metadata
-        )
+        resp = self._stub.ListModels(models_pb2.ListModelsRequest(), metadata=self._metadata)
         return [
             ModelInfo(
                 name=m.name,
@@ -188,12 +193,8 @@ class ModelClient(BaseClient):
         tags: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Register a system prompt with versioning."""
-        metadata_pb = models_pb2.PromptMetadata(
-            author=author or "", tags=tags or []
-        )
-        request = models_pb2.RegisterPromptRequest(
-            name=name, content=content, metadata=metadata_pb
-        )
+        metadata_pb = models_pb2.PromptMetadata(author=author or "", tags=tags or [])
+        request = models_pb2.RegisterPromptRequest(name=name, content=content, metadata=metadata_pb)
         resp = self._stub.RegisterPrompt(request, metadata=self._metadata)
         return {"name": resp.name, "version": resp.version, "created_at": resp.created_at}
 
@@ -214,9 +215,7 @@ class ModelClient(BaseClient):
 
     def list_prompts(self) -> List[Dict[str, Any]]:
         """List all prompts (latest version per prompt)."""
-        resp = self._stub.ListPrompts(
-            models_pb2.ListPromptsRequest(), metadata=self._metadata
-        )
+        resp = self._stub.ListPrompts(models_pb2.ListPromptsRequest(), metadata=self._metadata)
         return [
             {
                 "name": p.name,
@@ -287,22 +286,14 @@ class ModelClient(BaseClient):
     # ==================== Fallback Helpers ====================
 
     @staticmethod
-    def _build_model_chain(
-        primary: str, fallback_config: Optional[FallbackConfig]
-    ) -> List[str]:
+    def _build_model_chain(primary: str, fallback_config: Optional[FallbackConfig]) -> List[str]:
         """Return the ordered list of models to try: [primary, *fallbacks]."""
-        if (
-            fallback_config is None
-            or not fallback_config.enabled
-            or not fallback_config.providers
-        ):
+        if fallback_config is None or not fallback_config.enabled or not fallback_config.providers:
             return [primary]
         return [primary] + list(fallback_config.providers)
 
     @staticmethod
-    def _should_fail_fast(
-        error: grpc.RpcError, fallback_config: Optional[FallbackConfig]
-    ) -> bool:
+    def _should_fail_fast(error: grpc.RpcError, fallback_config: Optional[FallbackConfig]) -> bool:
         """Return True if the error should skip fallbacks entirely."""
         if fallback_config is None or not fallback_config.enabled:
             return True
@@ -348,9 +339,7 @@ class ModelClient(BaseClient):
                     )
                 )
         if response_format:
-            request.response_format.CopyFrom(
-                models_pb2.ResponseFormat(type=response_format)
-            )
+            request.response_format.CopyFrom(models_pb2.ResponseFormat(type=response_format))
         return request
 
     # ==================== Conversion Helpers ====================

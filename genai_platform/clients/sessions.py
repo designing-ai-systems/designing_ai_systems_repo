@@ -29,17 +29,13 @@ class SessionClient(BaseClient):
 
     # --- Session management ---
 
-    def get_or_create(
-        self, user_id: str, session_id: Optional[str] = None
-    ) -> Session:
+    def get_or_create(self, user_id: str, session_id: Optional[str] = None) -> Session:
         """Get existing session or create a new one (Listing 4.17)."""
         request = sessions_pb2.GetOrCreateSessionRequest(
             user_id=user_id,
             session_id=session_id if session_id else "",
         )
-        response = self._stub.GetOrCreateSession(
-            request, metadata=self._metadata
-        )
+        response = self._stub.GetOrCreateSession(request, metadata=self._metadata)
         s = response.session
         return Session(
             session_id=s.session_id,
@@ -72,14 +68,10 @@ class SessionClient(BaseClient):
 
     # --- Message operations ---
 
-    def add_messages(
-        self, session_id: str, messages: List[Dict[str, Any]]
-    ) -> int:
+    def add_messages(self, session_id: str, messages: List[Dict[str, Any]]) -> int:
         """Add messages to a session. Accepts list of dicts (Listing 4.18)."""
         proto_messages = [self._dict_to_proto(m) for m in messages]
-        request = sessions_pb2.AddMessagesRequest(
-            session_id=session_id, messages=proto_messages
-        )
+        request = sessions_pb2.AddMessagesRequest(session_id=session_id, messages=proto_messages)
         response = self._stub.AddMessages(request, metadata=self._metadata)
         return response.message_count
 
@@ -154,9 +146,7 @@ class SessionClient(BaseClient):
     def clear_user_memory(self, user_id: str) -> int:
         """Clear all memories for a user."""
         request = sessions_pb2.ClearUserMemoryRequest(user_id=user_id)
-        response = self._stub.ClearUserMemory(
-            request, metadata=self._metadata
-        )
+        response = self._stub.ClearUserMemory(request, metadata=self._metadata)
         return response.count
 
     # --- Conversion helpers ---
@@ -164,9 +154,7 @@ class SessionClient(BaseClient):
     def _dict_to_proto(self, msg_dict: Dict[str, Any]) -> sessions_pb2.Message:
         message = sessions_pb2.Message(
             role=msg_dict.get("role", "user"),
-            timestamp=msg_dict.get(
-                "timestamp", int(datetime.utcnow().timestamp() * 1000)
-            ),
+            timestamp=msg_dict.get("timestamp", int(datetime.utcnow().timestamp() * 1000)),
         )
         if "content" in msg_dict and msg_dict["content"] is not None:
             message.content = msg_dict["content"]
@@ -205,11 +193,7 @@ class SessionClient(BaseClient):
             role=proto_msg.role,
             content=proto_msg.content if proto_msg.HasField("content") else None,
             tool_calls=tool_calls,
-            tool_call_id=(
-                proto_msg.tool_call_id
-                if proto_msg.HasField("tool_call_id")
-                else None
-            ),
+            tool_call_id=(proto_msg.tool_call_id if proto_msg.HasField("tool_call_id") else None),
             timestamp=datetime.fromtimestamp(proto_msg.timestamp / 1000)
             if proto_msg.timestamp
             else datetime.utcnow(),

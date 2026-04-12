@@ -9,4 +9,3 @@ from .workflow import workflow
 
 __all__ = ["GenAIPlatform", "workflow"]
 __version__ = "0.1.0"
-

@@ -13,52 +13,52 @@ import os
 import threading
 
 from services.gateway.registry import ServiceRegistry
-from services.gateway.servers import create_http_server, create_grpc_server
+from services.gateway.servers import create_grpc_server, create_http_server
 
 
 def main():
     """
     Run the API Gateway.
-    
+
     The gateway is a single component that handles both external HTTP requests
     and internal gRPC calls. It runs two servers internally:
     - HTTP server for external clients → workflows
     - gRPC server for internal workflows → platform services
     """
     registry = ServiceRegistry()
-    
+
     # Register platform services from environment variables
     sessions_addr = os.getenv("SESSIONS_SERVICE_ADDR", "localhost:50052")
     registry.register_platform_service("sessions", sessions_addr)
     models_addr = os.getenv("MODELS_SERVICE_ADDR", "localhost:50053")
     registry.register_platform_service("models", models_addr)
-    
+
     # Register workflows (in production, this would come from Workflow Service)
     # For now, we can register manually for testing
     # registry.register_workflow("/patient-assistant", "localhost:8000")
-    
+
     # Ports
     http_port = int(os.getenv("GATEWAY_HTTP_PORT", "8080"))
     grpc_port = int(os.getenv("GATEWAY_PORT", "50051"))
-    
-    print(f"Starting API Gateway (single component, two purposes)")
+
+    print("Starting API Gateway (single component, two purposes)")
     print(f"  External HTTP (clients → workflows): port {http_port}")
     print(f"  Internal gRPC (workflows → platform services): port {grpc_port}")
     print("\nGateway routes:")
     print("  - HTTP requests to workflows based on API path")
     print("  - gRPC requests to platform services based on x-target-service metadata")
-    
+
     # Start HTTP server in a separate thread
     http_server = create_http_server(registry, http_port)
     http_thread = threading.Thread(target=http_server.serve_forever, daemon=True)
     http_thread.start()
     print(f"HTTP server started on port {http_port}")
-    
+
     # Start gRPC server
     grpc_server = create_grpc_server(registry, grpc_port)
     grpc_server.start()
     print(f"gRPC server started on port {grpc_port}")
-    
+
     print("\nGateway started. Press Ctrl+C to stop.")
     try:
         grpc_server.wait_for_termination()

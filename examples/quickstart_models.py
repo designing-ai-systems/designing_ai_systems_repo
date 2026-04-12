@@ -13,16 +13,16 @@ Book: "Designing AI Systems" (https://www.manning.com/books/designing-ai-systems
 """
 
 import sys
-import time
 import threading
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from genai_platform import GenAIPlatform
-from services.models.models import FallbackConfig, RetryConfig
-from services.models.main import main as start_model_service
 from services.gateway.main import main as start_gateway
+from services.models.main import main as start_model_service
+from services.models.models import FallbackConfig, RetryConfig
 
 
 def start_service_in_thread(service_func, service_name):
@@ -31,6 +31,7 @@ def start_service_in_thread(service_func, service_name):
             service_func()
         except KeyboardInterrupt:
             pass
+
     thread = threading.Thread(target=run_service, daemon=True, name=service_name)
     thread.start()
     return thread
@@ -66,9 +67,9 @@ def main():
         print("=" * 50)
         print("Testing both providers (both API keys detected)")
         print("=" * 50)
-        
+
         test_question = "Say 'Hello' in one word."
-        
+
         # Test Anthropic
         print("\n[Anthropic]")
         resp = platform.models.chat(
@@ -78,7 +79,7 @@ def main():
         )
         print(f"  Response: {resp.content}")
         print(f"  Model: {resp.model}")
-        
+
         # Test OpenAI
         print("\n[OpenAI]")
         resp = platform.models.chat(
@@ -90,7 +91,8 @@ def main():
         print(f"  Model: {resp.model}")
         print("\n✓ Both providers working!\n")
     else:
-        print(f"Only {', '.join(providers)} configured. Set both keys to test multi-provider support.\n")
+        names = ", ".join(providers)
+        print(f"Only {names} configured. Set both keys to test multi-provider support.\n")
 
     # --- Configure fallback: Anthropic primary, OpenAI fallback ---
     fallback = FallbackConfig(

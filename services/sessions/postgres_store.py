@@ -48,14 +48,10 @@ class PostgresSessionStorage(SessionStorage):
 
     # --- Session management ---
 
-    def get_or_create_session(
-        self, user_id: str, session_id: Optional[str] = None
-    ) -> Session:
+    def get_or_create_session(self, user_id: str, session_id: Optional[str] = None) -> Session:
         with self.conn.cursor() as cur:
             if session_id:
-                cur.execute(
-                    "SELECT * FROM sessions WHERE session_id = %s", (session_id,)
-                )
+                cur.execute("SELECT * FROM sessions WHERE session_id = %s", (session_id,))
                 row = cur.fetchone()
                 if row:
                     return self._row_to_session(row)
@@ -82,9 +78,7 @@ class PostgresSessionStorage(SessionStorage):
 
     def delete_session(self, session_id: str) -> bool:
         with self.conn.cursor() as cur:
-            cur.execute(
-                "DELETE FROM sessions WHERE session_id = %s", (session_id,)
-            )
+            cur.execute("DELETE FROM sessions WHERE session_id = %s", (session_id,))
             self.conn.commit()
             return cur.rowcount > 0
 
@@ -95,17 +89,19 @@ class PostgresSessionStorage(SessionStorage):
             for msg in messages:
                 tool_calls_json = None
                 if msg.tool_calls:
-                    tool_calls_json = json.dumps([
-                        {
-                            "id": tc.id,
-                            "type": tc.type,
-                            "function": {
-                                "name": tc.function.name,
-                                "arguments": tc.function.arguments,
-                            },
-                        }
-                        for tc in msg.tool_calls
-                    ])
+                    tool_calls_json = json.dumps(
+                        [
+                            {
+                                "id": tc.id,
+                                "type": tc.type,
+                                "function": {
+                                    "name": tc.function.name,
+                                    "arguments": tc.function.arguments,
+                                },
+                            }
+                            for tc in msg.tool_calls
+                        ]
+                    )
                 cur.execute(
                     """INSERT INTO messages
                        (session_id, role, content, tool_calls, tool_call_id, timestamp)
@@ -193,9 +189,7 @@ class PostgresSessionStorage(SessionStorage):
             rows = cur.fetchall()
         return {r["key"]: json.loads(r["value"]) for r in rows}
 
-    def delete_memory(
-        self, user_id: str, key: str, session_id: Optional[str] = None
-    ) -> bool:
+    def delete_memory(self, user_id: str, key: str, session_id: Optional[str] = None) -> bool:
         query = "DELETE FROM memories WHERE user_id = %s AND key = %s AND session_id = %s"
         params: list = [user_id, key, session_id or ""]
         with self.conn.cursor() as cur:
