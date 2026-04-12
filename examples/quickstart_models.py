@@ -1,8 +1,11 @@
 """
 Quick start example for Model Service.
 
-Demonstrates basic chat with OpenAI and Anthropic.
+Demonstrates basic chat, streaming, and model discovery.
 Requires OPENAI_API_KEY and/or ANTHROPIC_API_KEY in .env file.
+
+Book: "Designing AI Systems" (https://www.manning.com/books/designing-ai-systems)
+  - Listing 3.20: Complete workflow example using Model Service
 """
 
 import sys
@@ -35,79 +38,54 @@ def main():
     start_service_in_thread(start_gateway, "Gateway")
     time.sleep(1)
     print("Services ready!\n")
-    
+
     platform = GenAIPlatform()
-    
-    # Example 1: Simple chat with OpenAI
+
+    # --- Example 1: Simple chat ---
     print("=" * 50)
-    print("OpenAI (gpt-4o)")
+    print("Chat - OpenAI (gpt-4o)")
     print("=" * 50)
     question = "Explain quantum computing in one sentence."
     print(f"Q: {question}")
-    
+
     response = platform.models.chat(
         model="gpt-4o",
         messages=[{"role": "user", "content": question}],
         temperature=0.7,
-        max_tokens=100
+        max_tokens=100,
     )
-    
-    print(f"A: {response['text']}")
-    print(f"Tokens: {response['usage']['total_tokens']}\n")
-    
-    # Example 2: Simple chat with Anthropic
-    print("=" * 50)
-    print("Anthropic (claude-sonnet-4-5)")
-    print("=" * 50)
-    question = "What's the speed of light?"
-    print(f"Q: {question}")
-    
-    response = platform.models.chat(
-        model="claude-sonnet-4-5",
-        messages=[{"role": "user", "content": question}],
-        temperature=0.7,
-        max_tokens=100
-    )
-    
-    print(f"A: {response['text']}")
-    print(f"Tokens: {response['usage']['total_tokens']}\n")
-    
-    # Example 3: Streaming with OpenAI
+
+    print(f"A: {response.content}")
+    if response.usage:
+        print(f"Tokens: {response.usage.total_tokens}")
+    print()
+
+    # --- Example 2: Streaming ---
     print("=" * 50)
     print("Streaming - OpenAI (gpt-4o)")
     print("=" * 50)
-    question = "Count from 1 to 3."
+    question = "Count from 1 to 5."
     print(f"Q: {question}")
     print("A: ", end="", flush=True)
-    
-    for token in platform.models.chat_stream(
+
+    for chunk in platform.models.chat_stream(
         model="gpt-4o",
         messages=[{"role": "user", "content": question}],
-        max_tokens=50
+        max_tokens=50,
     ):
-        print(token, end="", flush=True)
-    
+        print(chunk.token, end="", flush=True)
+
     print("\n")
-    
-    # Example 4: Streaming with Anthropic (longer response)
+
+    # --- Example 3: Model discovery ---
     print("=" * 50)
-    print("Streaming - Anthropic (claude-sonnet-4-5)")
+    print("Available models")
     print("=" * 50)
-    question = "Explain the process of photosynthesis in plants."
-    print(f"Q: {question}")
-    print("A: ", end="", flush=True)
-    
-    for token in platform.models.chat_stream(
-        model="claude-sonnet-4-5",
-        messages=[{"role": "user", "content": question}],
-        temperature=0.7,
-        max_tokens=200
-    ):
-        print(token, end="", flush=True)
-    
-    print("\n")
-    
-    print("\n✓ Done! Press Ctrl+C to stop.")
+    models = platform.models.list_models()
+    for m in models:
+        print(f"  {m.name} ({m.provider}) - context: {m.capabilities.context_window}")
+
+    print("\n\nDone! Press Ctrl+C to stop.")
     try:
         while True:
             time.sleep(1)

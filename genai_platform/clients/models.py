@@ -1,274 +1,216 @@
 """
 Model Service client.
 
-Provides clean Python API - pb2 objects are internal implementation only.
+Returns domain dataclasses (ChatResponse, ChatChunk, etc.),
+never exposing Protocol Buffers to the caller.
+
+Book: "Designing AI Systems" (https://www.manning.com/books/designing-ai-systems)
+  - Listing 3.17: ModelClient initialization (class + __init__)
+  - Listing 3.18: ModelClient.chat() method
+  - Listing 3.19: ModelClient.chat_stream() method
 """
 
-from typing import Iterator, Optional, List, Dict, Any
+import json
+from typing import Any, Dict, Iterator, List, Optional
 
-from proto import models_pb2
-from proto import models_pb2_grpc
+from proto import models_pb2, models_pb2_grpc
+from services.models.models import (
+    ChatChunk,
+    ChatResponse,
+    ModelCapability,
+    ModelInfo,
+    TokenUsage,
+)
 
 from .base import BaseClient
 
 
 class ModelClient(BaseClient):
-    """
-    Client for Model Service.
-    
-    All methods accept clean Python types (dicts, strings, etc.)
-    Protocol Buffers are internal implementation details.
-    """
+    """Client for Model Service."""
 
     def __init__(self, platform):
         super().__init__(platform, "models")
         self._stub = models_pb2_grpc.ModelServiceStub(self._channel)
 
+    # ==================== Core Inference ====================
+
     def chat(
         self,
         model: str,
-        messages: List[Dict[str, str]],
+        messages: List[Dict[str, Any]],
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
-        **kwargs
-    ) -> Dict[str, Any]:
-        """
-        Generate a chat response.
-        
-        Args:
-            model: Model name (e.g., "gpt-4o", "claude-sonnet-4-5")
-            messages: List of message dicts with 'role' and 'content'
-            temperature: Sampling temperature (0-2)
-            max_tokens: Maximum tokens to generate
-            
-        Returns:
-            Dict with 'text', 'model', 'usage', etc.
-            
+        tools: Optional[List[Dict[str, Any]]] = None,
+        response_format: Optional[str] = None,
+        system_prompt_name: Optional[str] = None,
+        **kwargs,
+    ) -> ChatResponse:
+        """Generate a chat response. Returns ChatResponse dataclass.
+
         Example:
             response = platform.models.chat(
                 model="gpt-4o",
-                messages=[{"role": "user", "content": "Hello!"}]
+                messages=[{"role": "user", "content": "Hello!"}],
             )
-            print(response['text'])
+            print(response.content)
         """
-        # Build pb2 request internally
-        pb_messages = [
-            models_pb2.ChatMessage(role=msg["role"], content=msg["content"])
-            for msg in messages
-        ]
-        
+        pb_messages = [self._dict_to_proto_msg(m) for m in messages]
         config = models_pb2.ChatConfig(temperature=temperature)
         if max_tokens:
             config.max_tokens = max_tokens
-        
+
         request = models_pb2.ChatRequest(
             model=model,
             messages=pb_messages,
-            config=config
+            config=config,
         )
-        
-        # Call service
-        response = self._stub.Chat(request, metadata=self.metadata)
-        
-        # Return clean dict
-        return {
-            'text': response.text,
-            'model': response.model,
-            'provider': response.provider,
-            'usage': {
-                'prompt_tokens': response.usage.prompt_tokens,
-                'completion_tokens': response.usage.completion_tokens,
-                'total_tokens': response.usage.total_tokens
-            } if response.HasField('usage') else None,
-            'finish_reason': response.finish_reason
-        }
+        if system_prompt_name:
+            request.system_prompt_name = system_prompt_name
+        if tools:
+            for t in tools:
+                func = t.get("function", {})
+                request.tools.append(
+                    models_pb2.ToolDefinition(
+                        type=t.get("type", "function"),
+                        function=models_pb2.FunctionDef(
+                            name=func.get("name", ""),
+                            description=func.get("description", ""),
+                            parameters_json=json.dumps(func.get("parameters", {})),
+                        ),
+                    )
+                )
+        if response_format:
+            request.response_format.CopyFrom(
+                models_pb2.ResponseFormat(type=response_format)
+            )
+
+        resp = self._stub.Chat(request, metadata=self._metadata)
+        return self._proto_to_chat_response(resp)
 
     def chat_stream(
         self,
         model: str,
-        messages: List[Dict[str, str]],
+        messages: List[Dict[str, Any]],
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
-        **kwargs
-    ) -> Iterator[str]:
-        """
-        Stream a chat response token by token.
-        
-        Args:
-            model: Model name
-            messages: List of message dicts with 'role' and 'content'
-            temperature: Sampling temperature (0-2)
-            max_tokens: Maximum tokens to generate
-            
-        Yields:
-            String tokens as they're generated
-            
+        **kwargs,
+    ) -> Iterator[ChatChunk]:
+        """Stream a chat response. Yields ChatChunk dataclasses.
+
         Example:
-            for token in platform.models.chat_stream(
+            for chunk in platform.models.chat_stream(
                 model="gpt-4o",
-                messages=[{"role": "user", "content": "Hello"}]
+                messages=[{"role": "user", "content": "Hello"}],
             ):
-                print(token, end="", flush=True)
+                print(chunk.token, end="", flush=True)
         """
-        # Build pb2 request internally
-        pb_messages = [
-            models_pb2.ChatMessage(role=msg["role"], content=msg["content"])
-            for msg in messages
-        ]
-        
+        pb_messages = [self._dict_to_proto_msg(m) for m in messages]
         config = models_pb2.ChatConfig(temperature=temperature)
         if max_tokens:
             config.max_tokens = max_tokens
-        
+
         request = models_pb2.ChatRequest(
             model=model,
             messages=pb_messages,
-            config=config
+            config=config,
         )
-        
-        # Stream tokens
-        for chunk in self._stub.ChatStream(request, metadata=self.metadata):
-            if chunk.token:
-                yield chunk.token
 
-    def list_models(self) -> List[Dict[str, Any]]:
-        """
-        List available models and capabilities.
-        
-        Returns:
-            List of model dicts with name, provider, capabilities
-            
-        Example:
-            models = platform.models.list_models()
-            for model in models:
-                print(f"{model['name']} ({model['provider']})")
-        """
-        response = self._stub.ListModels(
-            models_pb2.ListModelsRequest(),
-            metadata=self.metadata
+        for chunk in self._stub.ChatStream(request, metadata=self._metadata):
+            usage = None
+            if chunk.HasField("usage"):
+                usage = TokenUsage(
+                    prompt_tokens=chunk.usage.prompt_tokens,
+                    completion_tokens=chunk.usage.completion_tokens,
+                    total_tokens=chunk.usage.total_tokens,
+                )
+            yield ChatChunk(
+                token=chunk.token,
+                model=chunk.model,
+                finish_reason=chunk.finish_reason if chunk.HasField("finish_reason") else None,
+                usage=usage,
+            )
+
+    # ==================== Discovery ====================
+
+    def list_models(self) -> List[ModelInfo]:
+        """List available models. Returns list of ModelInfo dataclasses."""
+        resp = self._stub.ListModels(
+            models_pb2.ListModelsRequest(), metadata=self._metadata
         )
-        
         return [
-            {
-                'name': model.name,
-                'provider': model.provider,
-                'capabilities': {
-                    'context_window': model.capabilities.context_window,
-                    'supports_vision': model.capabilities.supports_vision,
-                    'supports_tools': model.capabilities.supports_tools
-                }
-            }
-            for model in response.models
+            ModelInfo(
+                name=m.name,
+                provider=m.provider,
+                capabilities=ModelCapability(
+                    context_window=m.capabilities.context_window,
+                    supports_vision=m.capabilities.supports_vision,
+                    supports_tools=m.capabilities.supports_tools,
+                ),
+            )
+            for m in resp.models
         ]
-    
-    def get_model_capabilities(self, model: str) -> Dict[str, Any]:
-        """
-        Get capabilities for a specific model.
-        
-        Args:
-            model: Model name
-            
-        Returns:
-            Dict with context_window, supports_vision, supports_tools
-        """
+
+    def get_model_capabilities(self, model: str) -> ModelCapability:
+        """Get capabilities for a specific model."""
         request = models_pb2.GetCapabilitiesRequest(model=model)
-        caps = self._stub.GetModelCapabilities(request, metadata=self.metadata)
-        
-        return {
-            'context_window': caps.context_window,
-            'supports_vision': caps.supports_vision,
-            'supports_tools': caps.supports_tools
-        }
-    
+        caps = self._stub.GetModelCapabilities(request, metadata=self._metadata)
+        return ModelCapability(
+            context_window=caps.context_window,
+            supports_vision=caps.supports_vision,
+            supports_tools=caps.supports_tools,
+        )
+
+    # ==================== Prompt Management ====================
+
     def register_prompt(
         self,
         name: str,
         content: str,
         author: Optional[str] = None,
-        tags: Optional[List[str]] = None
+        tags: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
-        """
-        Register a system prompt with versioning.
-        
-        Args:
-            name: Prompt name
-            content: Prompt text
-            author: Optional author name
-            tags: Optional tags
-            
-        Returns:
-            Dict with name, version, created_at
-        """
+        """Register a system prompt with versioning."""
         metadata_pb = models_pb2.PromptMetadata(
-            author=author or "",
-            tags=tags or []
+            author=author or "", tags=tags or []
         )
-        
         request = models_pb2.RegisterPromptRequest(
-            name=name,
-            content=content,
-            metadata=metadata_pb
+            name=name, content=content, metadata=metadata_pb
         )
-        
-        response = self._stub.RegisterPrompt(request, metadata=self.metadata)
-        
-        return {
-            'name': response.name,
-            'version': response.version,
-            'created_at': response.created_at
-        }
-    
+        resp = self._stub.RegisterPrompt(request, metadata=self._metadata)
+        return {"name": resp.name, "version": resp.version, "created_at": resp.created_at}
+
     def get_prompt(self, name: str, version: Optional[int] = None) -> Dict[str, Any]:
-        """
-        Retrieve a prompt by name and version.
-        
-        Args:
-            name: Prompt name
-            version: Optional version (latest if not provided)
-            
-        Returns:
-            Dict with name, version, content, metadata
-        """
-        request = models_pb2.GetPromptRequest(
-            name=name,
-            version=version or 0
-        )
-        
-        prompt = self._stub.GetPrompt(request, metadata=self.metadata)
-        
+        """Retrieve a prompt by name and version."""
+        request = models_pb2.GetPromptRequest(name=name, version=version or 0)
+        prompt = self._stub.GetPrompt(request, metadata=self._metadata)
         return {
-            'name': prompt.name,
-            'version': prompt.version,
-            'content': prompt.content,
-            'metadata': {
-                'author': prompt.metadata.author,
-                'tags': list(prompt.metadata.tags)
+            "name": prompt.name,
+            "version": prompt.version,
+            "content": prompt.content,
+            "metadata": {
+                "author": prompt.metadata.author,
+                "tags": list(prompt.metadata.tags),
             },
-            'created_at': prompt.created_at
+            "created_at": prompt.created_at,
         }
-    
+
     def list_prompts(self) -> List[Dict[str, Any]]:
-        """
-        List all prompts (latest version per prompt).
-        
-        Returns:
-            List of prompt dicts
-        """
-        response = self._stub.ListPrompts(
-            models_pb2.ListPromptsRequest(),
-            metadata=self.metadata
+        """List all prompts (latest version per prompt)."""
+        resp = self._stub.ListPrompts(
+            models_pb2.ListPromptsRequest(), metadata=self._metadata
         )
-        
         return [
             {
-                'name': prompt.name,
-                'version': prompt.version,
-                'content': prompt.content,
-                'created_at': prompt.created_at
+                "name": p.name,
+                "version": p.version,
+                "content": p.content,
+                "created_at": p.created_at,
             }
-            for prompt in response.prompts
+            for p in resp.prompts
         ]
-    
+
+    # ==================== Model Registry ====================
+
     def register_model(
         self,
         name: str,
@@ -278,87 +220,104 @@ class ModelClient(BaseClient):
         supports_vision: bool = False,
         supports_tools: bool = True,
         provider: Optional[str] = None,
-        health_check: Optional[str] = None
+        health_check: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """
-        Register a custom model endpoint.
-        
-        Args:
-            name: Model name
-            endpoint: API endpoint URL
-            adapter_type: "openai", "anthropic", or "vllm"
-            context_window: Token limit
-            supports_vision: Whether model supports images
-            supports_tools: Whether model supports function calling
-            provider: Optional provider display name
-            health_check: Optional health check endpoint
-            
-        Returns:
-            Dict with name, status, registered_at
-        """
+        """Register a custom model endpoint."""
         capabilities = models_pb2.ModelCapabilities(
             context_window=context_window,
             supports_vision=supports_vision,
-            supports_tools=supports_tools
+            supports_tools=supports_tools,
         )
-        
         request = models_pb2.RegisterModelRequest(
             name=name,
             endpoint=endpoint,
             capabilities=capabilities,
             health_check=health_check or "",
             adapter_type=adapter_type,
-            provider=provider or ""
+            provider=provider or "",
         )
-        
-        response = self._stub.RegisterModel(request, metadata=self.metadata)
-        
-        return {
-            'name': response.name,
-            'status': response.status,
-            'registered_at': response.registered_at
-        }
-    
+        resp = self._stub.RegisterModel(request, metadata=self._metadata)
+        return {"name": resp.name, "status": resp.status, "registered_at": resp.registered_at}
+
     def list_registered_models(self) -> List[Dict[str, Any]]:
-        """
-        List all registered custom models.
-        
-        Returns:
-            List of registered model dicts
-        """
-        response = self._stub.ListRegisteredModels(
-            models_pb2.ListRegisteredModelsRequest(),
-            metadata=self.metadata
+        """List all registered custom models."""
+        resp = self._stub.ListRegisteredModels(
+            models_pb2.ListRegisteredModelsRequest(), metadata=self._metadata
         )
-        
         return [
             {
-                'name': model.name,
-                'endpoint': model.endpoint,
-                'provider': model.provider,
-                'adapter_type': model.adapter_type,
-                'status': model.status
+                "name": m.name,
+                "endpoint": m.endpoint,
+                "provider": m.provider,
+                "adapter_type": m.adapter_type,
+                "status": m.status,
             }
-            for model in response.models
+            for m in resp.models
         ]
-    
+
     def get_model_status(self, name: str) -> Dict[str, Any]:
-        """
-        Get status for a registered model.
-        
-        Args:
-            name: Model name
-            
-        Returns:
-            Dict with name, status, last_checked, endpoint
-        """
+        """Get status for a registered model."""
         request = models_pb2.GetModelStatusRequest(name=name)
-        status = self._stub.GetModelStatus(request, metadata=self.metadata)
-        
+        status = self._stub.GetModelStatus(request, metadata=self._metadata)
         return {
-            'name': status.name,
-            'status': status.status,
-            'last_checked': status.last_checked,
-            'endpoint': status.endpoint
+            "name": status.name,
+            "status": status.status,
+            "last_checked": status.last_checked,
+            "endpoint": status.endpoint,
         }
 
+    # ==================== Conversion Helpers ====================
+
+    def _dict_to_proto_msg(self, msg_dict: Dict[str, Any]) -> models_pb2.ChatMessage:
+        proto_msg = models_pb2.ChatMessage(role=msg_dict.get("role", "user"))
+        content = msg_dict.get("content")
+        if content is not None:
+            proto_msg.content = content
+        if msg_dict.get("tool_call_id"):
+            proto_msg.tool_call_id = msg_dict["tool_call_id"]
+        if msg_dict.get("name"):
+            proto_msg.name = msg_dict["name"]
+        if msg_dict.get("tool_calls"):
+            for tc in msg_dict["tool_calls"]:
+                func = tc.get("function", {})
+                proto_msg.tool_calls.append(
+                    models_pb2.ToolCall(
+                        id=tc.get("id", ""),
+                        type=tc.get("type", "function"),
+                        function=models_pb2.ToolCallFunction(
+                            name=func.get("name", ""),
+                            arguments=func.get("arguments", ""),
+                        ),
+                    )
+                )
+        return proto_msg
+
+    def _proto_to_chat_response(self, resp) -> ChatResponse:
+        usage = None
+        if resp.HasField("usage"):
+            usage = TokenUsage(
+                prompt_tokens=resp.usage.prompt_tokens,
+                completion_tokens=resp.usage.completion_tokens,
+                total_tokens=resp.usage.total_tokens,
+            )
+        tool_calls = None
+        if resp.tool_calls:
+            tool_calls = [
+                {
+                    "id": tc.id,
+                    "type": tc.type,
+                    "function": {
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments,
+                    },
+                }
+                for tc in resp.tool_calls
+            ]
+        return ChatResponse(
+            content=resp.content if resp.content else None,
+            model=resp.model,
+            provider=resp.provider,
+            usage=usage,
+            tool_calls=tool_calls,
+            finish_reason=resp.finish_reason,
+        )

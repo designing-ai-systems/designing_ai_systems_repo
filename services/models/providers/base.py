@@ -1,13 +1,24 @@
 """
 Provider adapter base class.
 
-Defines a unified interface for all model providers.
+Defines a unified interface for all model providers using domain types.
+
+Book: "Designing AI Systems" (https://www.manning.com/books/designing-ai-systems)
+  - Listing 3.8: Provider adapter interface (ModelProvider ABC)
 """
 
 from abc import ABC, abstractmethod
 from typing import Iterator, List, Optional
 
-from proto import models_pb2
+from services.models.models import (
+    ChatChunk,
+    ChatConfig,
+    ChatMessage,
+    ChatResponse,
+    ModelInfo,
+    ResponseFormat,
+    ToolDefinition,
+)
 
 
 class ModelProvider(ABC):
@@ -17,12 +28,12 @@ class ModelProvider(ABC):
     def chat(
         self,
         model: str,
-        messages: List[models_pb2.ChatMessage],
-        config: models_pb2.ChatConfig,
-        tools: Optional[List[models_pb2.ToolDefinition]] = None,
-        response_format: Optional[models_pb2.ResponseFormat] = None,
+        messages: List[ChatMessage],
+        config: ChatConfig,
+        tools: Optional[List[ToolDefinition]] = None,
+        response_format: Optional[ResponseFormat] = None,
         system_prompt: Optional[str] = None,
-    ) -> models_pb2.ChatResponse:
+    ) -> ChatResponse:
         """Generate a response synchronously."""
         raise NotImplementedError
 
@@ -30,21 +41,16 @@ class ModelProvider(ABC):
     def chat_stream(
         self,
         model: str,
-        messages: List[models_pb2.ChatMessage],
-        config: models_pb2.ChatConfig,
-        tools: Optional[List[models_pb2.ToolDefinition]] = None,
-        response_format: Optional[models_pb2.ResponseFormat] = None,
+        messages: List[ChatMessage],
+        config: ChatConfig,
+        tools: Optional[List[ToolDefinition]] = None,
+        response_format: Optional[ResponseFormat] = None,
         system_prompt: Optional[str] = None,
-    ) -> Iterator[models_pb2.ChatChunk]:
+    ) -> Iterator[ChatChunk]:
         """Generate a response with streaming tokens."""
         raise NotImplementedError
 
     @abstractmethod
-    def get_supported_models(self) -> List[models_pb2.ModelInfo]:
-        """
-        Report which models this provider supports.
-        
-        Returns:
-            List of ModelInfo, each containing model name, provider, and capabilities
-        """
+    def get_supported_models(self) -> List[ModelInfo]:
+        """Report which models this provider supports."""
         raise NotImplementedError

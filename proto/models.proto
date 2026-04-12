@@ -1,202 +1,220 @@
+// Model Service Protocol Buffer definitions.
+//
+// Book: "Designing AI Systems" (https://www.manning.com/books/designing-ai-systems)
+//   Listing 3.5: ModelService gRPC definition (service block)
+//   Listing 3.6: ChatRequest Protocol Buffer definition
+//   Listing 3.7: ChatResponse Protocol Buffer definition
+//   Listing 3.10: ChatChunk message for streaming responses
+
 syntax = "proto3";
 
-package proto;
+package models;
 
-// Model Service Protocol Buffer definitions
-
+// Listing 3.5
 service ModelService {
-  // Core inference
-  rpc Chat(ChatRequest) returns (ChatResponse);
-  rpc ChatStream(ChatRequest) returns (stream ChatChunk);
+    // Core inference
+    rpc Chat(ChatRequest) returns (ChatResponse);
+    rpc ChatStream(ChatRequest) returns (stream ChatChunk);
 
-  // Discovery
-  rpc ListModels(ListModelsRequest) returns (ListModelsResponse);
-  rpc GetModelCapabilities(GetCapabilitiesRequest) returns (ModelCapabilities);
+    // Discovery
+    rpc ListModels(ListModelsRequest) returns (ListModelsResponse);
+    rpc GetModelCapabilities(GetCapabilitiesRequest) returns (ModelCapabilities);
 
-  // Prompt management
-  rpc RegisterPrompt(RegisterPromptRequest) returns (RegisterPromptResponse);
-  rpc GetPrompt(GetPromptRequest) returns (Prompt);
-  rpc ListPrompts(ListPromptsRequest) returns (ListPromptsResponse);
+    // Prompt management
+    rpc RegisterPrompt(RegisterPromptRequest) returns (RegisterPromptResponse);
+    rpc GetPrompt(GetPromptRequest) returns (Prompt);
+    rpc ListPrompts(ListPromptsRequest) returns (ListPromptsResponse);
 
-  // Custom model registry
-  rpc RegisterModel(RegisterModelRequest) returns (RegisterModelResponse);
-  rpc ListRegisteredModels(ListRegisteredModelsRequest) returns (ListRegisteredModelsResponse);
-  rpc GetModelStatus(GetModelStatusRequest) returns (ModelStatus);
+    // Custom model registry
+    rpc RegisterModel(RegisterModelRequest) returns (RegisterModelResponse);
+    rpc ListRegisteredModels(ListRegisteredModelsRequest) returns (ListRegisteredModelsResponse);
+    rpc GetModelStatus(GetModelStatusRequest) returns (ModelStatus);
 }
 
+// Listing 3.6
 message ChatRequest {
-  string model = 1;
-  repeated ChatMessage messages = 2;
-  ChatConfig config = 3;
-  repeated ToolDefinition tools = 4;
-  optional ResponseFormat response_format = 5;
-  string system_prompt_name = 6;
+    string model = 1;
+    repeated ChatMessage messages = 2;
+    ChatConfig config = 3;
+    repeated ToolDefinition tools = 4;
+    optional ResponseFormat response_format = 5;
+    string system_prompt_name = 6;
 }
 
 message ChatMessage {
-  string role = 1;
-  string content = 2;
-  string tool_call_id = 3;
-  repeated ToolCall tool_calls = 4;
+    string role = 1;
+    optional string content = 2;
+    string tool_call_id = 3;
+    repeated ToolCall tool_calls = 4;
+    optional string name = 5;
 }
 
 message ChatConfig {
-  float temperature = 1;
-  int32 max_tokens = 2;
-  float top_p = 3;
-  repeated string stop_sequences = 4;
+    float temperature = 1;
+    int32 max_tokens = 2;
+    float top_p = 3;
+    repeated string stop_sequences = 4;
+    float frequency_penalty = 5;
+    float presence_penalty = 6;
 }
 
 message ToolDefinition {
-  string name = 1;
-  string description = 2;
-  string parameters_json = 3;
+    string type = 1;
+    FunctionDef function = 2;
+}
+
+message FunctionDef {
+    string name = 1;
+    string description = 2;
+    string parameters_json = 3;
 }
 
 message ResponseFormat {
-  string type = 1;
-  string schema_json = 2;
+    string type = 1;
+    string schema_json = 2;
 }
 
-message ContentBlock {
-  string type = 1;
-  string text = 2;
-  bytes data = 3;
-}
-
+// Listing 3.7
 message ChatResponse {
-  oneof content {
-    string text = 1;
-    ContentBlocks blocks = 2;
-  }
-  string model = 3;
-  string provider = 4;
-  TokenUsage usage = 5;
-  repeated ToolCall tool_calls = 6;
-  string finish_reason = 7;
-}
-
-message ContentBlocks {
-  repeated ContentBlock blocks = 1;
+    string content = 1;
+    string model = 2;
+    string provider = 3;
+    TokenUsage usage = 4;
+    repeated ToolCall tool_calls = 5;
+    string finish_reason = 6;
 }
 
 message ToolCall {
-  string id = 1;
-  string name = 2;
-  string arguments_json = 3;
+    string id = 1;
+    string type = 2;
+    ToolCallFunction function = 3;
+}
+
+message ToolCallFunction {
+    string name = 1;
+    string arguments = 2;
 }
 
 message TokenUsage {
-  int32 prompt_tokens = 1;
-  int32 completion_tokens = 2;
-  int32 total_tokens = 3;
+    int32 prompt_tokens = 1;
+    int32 completion_tokens = 2;
+    int32 total_tokens = 3;
 }
 
+// Listing 3.10
 message ChatChunk {
-  string token = 1;
-  int32 index = 2;
-  optional string finish_reason = 3;
-  optional TokenUsage usage = 4;
+    string token = 1;
+    string model = 2;
+    optional string finish_reason = 3;
+    optional TokenUsage usage = 4;
 }
+
+// --- Discovery types ---
 
 message ModelCapabilities {
-  int32 context_window = 1;
-  bool supports_vision = 2;
-  bool supports_tools = 3;
+    int32 context_window = 1;
+    bool supports_vision = 2;
+    bool supports_tools = 3;
+    bool supports_streaming = 4;
+    bool supports_json_mode = 5;
 }
 
 message ModelInfo {
-  string name = 1;
-  string provider = 2;
-  ModelCapabilities capabilities = 3;
+    string name = 1;
+    string provider = 2;
+    ModelCapabilities capabilities = 3;
 }
 
 message ListModelsRequest {}
 
 message ListModelsResponse {
-  repeated ModelInfo models = 1;
+    repeated ModelInfo models = 1;
 }
 
 message GetCapabilitiesRequest {
-  string model = 1;
+    string model = 1;
 }
 
+// --- Prompt management ---
+
 message PromptMetadata {
-  string author = 1;
-  string reviewed_by = 2;
-  repeated string tags = 3;
+    string author = 1;
+    string reviewed_by = 2;
+    repeated string tags = 3;
 }
 
 message RegisterPromptRequest {
-  string name = 1;
-  string content = 2;
-  PromptMetadata metadata = 3;
+    string name = 1;
+    string content = 2;
+    PromptMetadata metadata = 3;
 }
 
 message RegisterPromptResponse {
-  string name = 1;
-  int32 version = 2;
-  string created_at = 3;
+    string name = 1;
+    int32 version = 2;
+    string created_at = 3;
 }
 
 message Prompt {
-  string name = 1;
-  int32 version = 2;
-  string content = 3;
-  PromptMetadata metadata = 4;
-  string created_at = 5;
+    string name = 1;
+    int32 version = 2;
+    string content = 3;
+    PromptMetadata metadata = 4;
+    string created_at = 5;
 }
 
 message GetPromptRequest {
-  string name = 1;
-  int32 version = 2;
+    string name = 1;
+    int32 version = 2;
 }
 
 message ListPromptsRequest {}
 
 message ListPromptsResponse {
-  repeated Prompt prompts = 1;
+    repeated Prompt prompts = 1;
 }
 
+// --- Custom model registry ---
+
 message RegisterModelRequest {
-  string name = 1;
-  string endpoint = 2;
-  ModelCapabilities capabilities = 3;
-  string health_check = 4;
-  string adapter_type = 5;  // Which adapter to use: "openai", "anthropic", "vllm", etc.
-  string provider = 6;  // Optional display name (defaults to "custom")
+    string name = 1;
+    string endpoint = 2;
+    ModelCapabilities capabilities = 3;
+    string health_check = 4;
+    string adapter_type = 5;
+    string provider = 6;
 }
 
 message RegisterModelResponse {
-  string name = 1;
-  string status = 2;
-  string registered_at = 3;
+    string name = 1;
+    string status = 2;
+    string registered_at = 3;
 }
 
 message RegisteredModel {
-  string name = 1;
-  string endpoint = 2;
-  ModelCapabilities capabilities = 3;
-  string health_check = 4;
-  string status = 5;
-  string registered_at = 6;
-  string provider = 7;  // Display name: "internal", "custom", etc.
-  string adapter_type = 8;  // Which adapter handles this: "openai-compatible", "vllm", etc.
+    string name = 1;
+    string endpoint = 2;
+    ModelCapabilities capabilities = 3;
+    string health_check = 4;
+    string status = 5;
+    string registered_at = 6;
+    string provider = 7;
+    string adapter_type = 8;
 }
 
 message ListRegisteredModelsRequest {}
 
 message ListRegisteredModelsResponse {
-  repeated RegisteredModel models = 1;
+    repeated RegisteredModel models = 1;
 }
 
 message GetModelStatusRequest {
-  string name = 1;
+    string name = 1;
 }
 
 message ModelStatus {
-  string name = 1;
-  string status = 2;
-  string last_checked = 3;
-  string endpoint = 4;
+    string name = 1;
+    string status = 2;
+    string last_checked = 3;
+    string endpoint = 4;
 }
