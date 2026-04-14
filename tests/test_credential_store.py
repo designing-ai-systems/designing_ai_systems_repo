@@ -40,9 +40,7 @@ class TestAccessControl:
             "key-123",
             allowed_tools=["healthcare.scheduling.book_appointment"],
         )
-        cred = await store.retrieve(
-            "scheduling-api-prod", "healthcare.scheduling.book_appointment"
-        )
+        cred = await store.retrieve("scheduling-api-prod", "healthcare.scheduling.book_appointment")
         assert cred.value == "key-123"
 
     async def test_allowed_tools_denies_non_matching(self):

@@ -9,10 +9,12 @@ Demonstrates:
   5. Policy-based access control
   6. Tool execution through the platform (with credential injection)
   7. Policy check with a seeded booking-rules policy (Listing 6.19)
-  8. Optional: Model tools synced from Tool Service (discover), chat, then execute (needs OPENAI_API_KEY)
+  8. Optional: Model tools synced from Tool Service (discover),
+     chat, then execute (needs OPENAI_API_KEY)
 
-Sections 1–7 run in-process. Section 8 calls a live model via the Model Service when OPENAI_API_KEY
-is set (OpenAI returns structured tool_calls through this stack; the Anthropic adapter here does not).
+Sections 1-7 run in-process. Section 8 calls a live model via
+the Model Service when OPENAI_API_KEY is set (OpenAI returns
+structured tool_calls; the Anthropic adapter here does not).
 
 Book: "Designing AI Systems" (https://www.manning.com/books/designing-ai-systems)
   - Listing 6.2: ToolDefinition (identity + schema)
@@ -52,7 +54,8 @@ from services.tools.model_sync import platform_tool_name_to_llm_function_name
 from services.tools.models import CostMetadata, RateLimits, ToolBehavior
 from services.tools.service import ToolServiceImpl
 
-# Platform tool used in §8; model-facing name is derived via platform_tool_name_to_llm_function_name.
+# Platform tool used in §8; model-facing name derived via
+# platform_tool_name_to_llm_function_name.
 DEMO_PLATFORM_TOOL = "healthcare.scheduling.check_availability"
 
 
@@ -63,8 +66,9 @@ def demo_model_service_with_tools(platform: GenAIPlatform) -> None:
     """
     if not os.environ.get("OPENAI_API_KEY"):
         print(
-            "  Skipped: set OPENAI_API_KEY to run Model Service + tools demo "
-            "(gpt-4o returns tool_calls; Anthropic adapter in this repo does not populate tool_calls)."
+            "  Skipped: set OPENAI_API_KEY to run Model Service"
+            " + tools demo (gpt-4o returns tool_calls;"
+            " Anthropic adapter does not)."
         )
         return
 
@@ -82,7 +86,10 @@ def demo_model_service_with_tools(platform: GenAIPlatform) -> None:
         return
 
     llm_fn = platform_tool_name_to_llm_function_name(DEMO_PLATFORM_TOOL)
-    print(f"  Synced model tools from Tool Service (LLM function {llm_fn!r} -> {DEMO_PLATFORM_TOOL!r}).")
+    print(
+        f"  Synced model tools from Tool Service "
+        f"(LLM function {llm_fn!r} -> {DEMO_PLATFORM_TOOL!r})."
+    )
 
     user_text = (
         f"You must call {llm_fn} with provider_id dr-smith and date_range next week. "
@@ -122,10 +129,17 @@ def demo_model_service_with_tools(platform: GenAIPlatform) -> None:
     print(f"  Arguments: {args}")
 
     exec_result = platform.tools.execute(tool_name=platform_tool, arguments=args)
-    print(f"  Tool Service execute success={exec_result.success} time_ms={exec_result.execution_time_ms}")
+    print(
+        f"  Tool Service execute success={exec_result.success}"
+        f" time_ms={exec_result.execution_time_ms}"
+    )
     print(f"  Tool result: {exec_result.result}")
 
-    tool_payload = exec_result.result if isinstance(exec_result.result, dict) else {"result": exec_result.result}
+    tool_payload = (
+        exec_result.result
+        if isinstance(exec_result.result, dict)
+        else {"result": exec_result.result}
+    )
     assistant_msg: dict = {"role": "assistant", "tool_calls": first.tool_calls}
     if first.content:
         assistant_msg["content"] = first.content
@@ -330,10 +344,7 @@ def main():
     print(f"  Time: {exec_result.execution_time_ms}ms")
     payload = exec_result.result if isinstance(exec_result.result, dict) else {}
     if payload.get("credential_injected"):
-        print(
-            "  Credential injection (Listing 6.14): yes "
-            f"(type={payload.get('credential_type')})"
-        )
+        print(f"  Credential injection (Listing 6.14): yes (type={payload.get('credential_type')})")
 
     # ========================================================
     # 4. Tool Validation

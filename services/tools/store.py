@@ -115,7 +115,8 @@ class InMemoryToolRegistry(ToolRegistry):
         for versions in self._tools.values():
             if version_constraint:
                 matched = [
-                    t for t in versions.values()
+                    t
+                    for t in versions.values()
                     if _matches_version_constraint(t.version, version_constraint)
                 ]
             else:

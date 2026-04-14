@@ -6,11 +6,11 @@ import pytest
 
 from genai_platform.clients.tools import ToolClient
 from proto import tools_pb2
-from services.tools.models import ToolDefinition
 from services.tools.model_sync import (
     platform_tool_name_to_llm_function_name,
     tool_definitions_to_model_tools,
 )
+from services.tools.models import ToolDefinition
 
 
 class TestPlatformToolNameToLlmFunctionName:
@@ -45,7 +45,10 @@ class TestToolDefinitionsToModelTools:
         assert fn["name"] == "healthcare_scheduling_check_availability"
         assert fn["description"] == "Check slots."
         assert fn["parameters"]["required"] == ["provider_id"]
-        assert m["healthcare_scheduling_check_availability"] == "healthcare.scheduling.check_availability"
+        assert (
+            m["healthcare_scheduling_check_availability"]
+            == "healthcare.scheduling.check_availability"
+        )
 
     def test_default_parameters_when_missing(self) -> None:
         defs = [ToolDefinition(name="a.b", description="d")]
