@@ -1,4 +1,4 @@
-"""Tests for ToolServiceImpl gRPC servicer."""
+"""Tests for ToolServiceImpl gRPC servicer (grpc.aio)."""
 
 import json
 
@@ -22,7 +22,7 @@ class FakeContext:
 
 
 class TestRegisterTool:
-    def test_register_returns_status(self):
+    async def test_register_returns_status(self):
         svc = ToolServiceImpl()
         request = tools_pb2.RegisterToolRequest(
             tool=tools_pb2.ToolDefinition(
@@ -31,13 +31,13 @@ class TestRegisterTool:
                 description="A test",
             )
         )
-        resp = svc.RegisterTool(request, FakeContext())
+        resp = await svc.RegisterTool(request, FakeContext())
         assert resp.name == "test.tool"
         assert resp.status == "registered"
 
 
 class TestDiscoverTools:
-    def _register_tools(self, svc):
+    async def _register_tools(self, svc):
         for name, caps, tags, read_only in [
             ("scheduling.book", ["scheduling"], ["patient"], False),
             ("scheduling.check", ["scheduling", "availability"], ["patient"], True),
@@ -50,41 +50,43 @@ class TestDiscoverTools:
                 tags=tags,
             )
             tool.behavior.CopyFrom(tools_pb2.ToolBehavior(is_read_only=read_only))
-            svc.RegisterTool(tools_pb2.RegisterToolRequest(tool=tool), FakeContext())
+            await svc.RegisterTool(tools_pb2.RegisterToolRequest(tool=tool), FakeContext())
 
-    def test_discover_all(self):
+    async def test_discover_all(self):
         svc = ToolServiceImpl()
-        self._register_tools(svc)
-        resp = svc.DiscoverTools(tools_pb2.DiscoverToolsRequest(), FakeContext())
+        await self._register_tools(svc)
+        resp = await svc.DiscoverTools(tools_pb2.DiscoverToolsRequest(), FakeContext())
         assert len(resp.tools) == 3
 
-    def test_discover_by_capability(self):
+    async def test_discover_by_capability(self):
         svc = ToolServiceImpl()
-        self._register_tools(svc)
-        resp = svc.DiscoverTools(
+        await self._register_tools(svc)
+        resp = await svc.DiscoverTools(
             tools_pb2.DiscoverToolsRequest(capabilities=["insurance"]),
             FakeContext(),
         )
         assert len(resp.tools) == 1
         assert resp.tools[0].name == "billing.verify"
 
-    def test_discover_read_only(self):
+    async def test_discover_read_only(self):
         svc = ToolServiceImpl()
-        self._register_tools(svc)
-        resp = svc.DiscoverTools(tools_pb2.DiscoverToolsRequest(read_only=True), FakeContext())
+        await self._register_tools(svc)
+        resp = await svc.DiscoverTools(
+            tools_pb2.DiscoverToolsRequest(read_only=True), FakeContext()
+        )
         assert len(resp.tools) == 2
 
 
 class TestExecuteTool:
-    def test_execute_registered_tool(self):
+    async def test_execute_registered_tool(self):
         svc = ToolServiceImpl()
-        svc.RegisterTool(
+        await svc.RegisterTool(
             tools_pb2.RegisterToolRequest(
                 tool=tools_pb2.ToolDefinition(name="test.tool", description="A test")
             ),
             FakeContext(),
         )
-        resp = svc.ExecuteTool(
+        resp = await svc.ExecuteTool(
             tools_pb2.ExecuteToolRequest(
                 tool_name="test.tool",
                 arguments_json='{"key": "value"}',
@@ -94,19 +96,69 @@ class TestExecuteTool:
         assert resp.success is True
         result = json.loads(resp.result_json)
         assert result["tool"] == "test.tool"
+        assert result.get("credential_injected") is None
 
-    def test_execute_nonexistent_tool(self):
+    async def test_execute_with_credential_injection(self):
+        svc = ToolServiceImpl()
+        await svc.credential_store.store(
+            "scheduling-api-prod",
+            "api_key",
+            "secret-xyz",
+            allowed_tools=["test.tool"],
+        )
+        await svc.RegisterTool(
+            tools_pb2.RegisterToolRequest(
+                tool=tools_pb2.ToolDefinition(
+                    name="test.tool",
+                    description="A test",
+                    credential_ref="scheduling-api-prod",
+                )
+            ),
+            FakeContext(),
+        )
+        resp = await svc.ExecuteTool(
+            tools_pb2.ExecuteToolRequest(
+                tool_name="test.tool",
+                arguments_json="{}",
+            ),
+            FakeContext(),
+        )
+        assert resp.success is True
+        result = json.loads(resp.result_json)
+        assert result.get("credential_injected") is True
+        assert result.get("credential_type") == "api_key"
+
+    async def test_execute_missing_credential(self):
+        svc = ToolServiceImpl()
+        await svc.RegisterTool(
+            tools_pb2.RegisterToolRequest(
+                tool=tools_pb2.ToolDefinition(
+                    name="test.tool",
+                    description="A test",
+                    credential_ref="missing-ref",
+                )
+            ),
+            FakeContext(),
+        )
+        resp = await svc.ExecuteTool(
+            tools_pb2.ExecuteToolRequest(tool_name="test.tool"),
+            FakeContext(),
+        )
+        assert resp.success is False
+        assert "not found" in resp.error
+
+    async def test_execute_nonexistent_tool(self):
         svc = ToolServiceImpl()
         ctx = FakeContext()
-        resp = svc.ExecuteTool(tools_pb2.ExecuteToolRequest(tool_name="nope"), ctx)
+        resp = await svc.ExecuteTool(tools_pb2.ExecuteToolRequest(tool_name="nope"), ctx)
         assert resp.success is False
         assert ctx.code == grpc.StatusCode.NOT_FOUND
 
-    def test_circuit_breaker_blocks_requests(self):
+    async def test_circuit_breaker_blocks_requests(self):
         cb = CircuitBreaker(failure_threshold=1)
         svc = ToolServiceImpl(circuit_breaker=cb)
         cb.record_result("blocked.tool", success=False)
-        resp = svc.ExecuteTool(
+        resp = await svc.ExecuteTool(
             tools_pb2.ExecuteToolRequest(tool_name="blocked.tool"),
             FakeContext(),
         )
@@ -115,9 +167,9 @@ class TestExecuteTool:
 
 
 class TestValidateTool:
-    def test_validate_registered_tool(self):
+    async def test_validate_registered_tool(self):
         svc = ToolServiceImpl()
-        svc.RegisterTool(
+        await svc.RegisterTool(
             tools_pb2.RegisterToolRequest(
                 tool=tools_pb2.ToolDefinition(
                     name="test.tool",
@@ -126,7 +178,7 @@ class TestValidateTool:
             ),
             FakeContext(),
         )
-        resp = svc.ValidateTool(
+        resp = await svc.ValidateTool(
             tools_pb2.ValidateToolRequest(
                 tool_name="test.tool",
                 arguments_json='{"patient_id": "123"}',
@@ -135,9 +187,9 @@ class TestValidateTool:
         )
         assert resp.valid is True
 
-    def test_validate_missing_required_param(self):
+    async def test_validate_missing_required_param(self):
         svc = ToolServiceImpl()
-        svc.RegisterTool(
+        await svc.RegisterTool(
             tools_pb2.RegisterToolRequest(
                 tool=tools_pb2.ToolDefinition(
                     name="test.tool",
@@ -146,7 +198,7 @@ class TestValidateTool:
             ),
             FakeContext(),
         )
-        resp = svc.ValidateTool(
+        resp = await svc.ValidateTool(
             tools_pb2.ValidateToolRequest(
                 tool_name="test.tool",
                 arguments_json="{}",
@@ -156,9 +208,9 @@ class TestValidateTool:
         assert resp.valid is False
         assert any("patient_id" in e for e in resp.errors)
 
-    def test_validate_nonexistent_tool(self):
+    async def test_validate_nonexistent_tool(self):
         svc = ToolServiceImpl()
-        resp = svc.ValidateTool(
+        resp = await svc.ValidateTool(
             tools_pb2.ValidateToolRequest(tool_name="nope"),
             FakeContext(),
         )

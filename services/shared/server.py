@@ -2,16 +2,18 @@
 Shared server utilities for platform services.
 
 Provides common patterns for:
-- gRPC server creation
+- gRPC server creation (sync and grpc.aio)
 - Port configuration
 - Server lifecycle management
 """
 
+import asyncio
 import os
 from concurrent import futures
 from typing import Optional
 
 import grpc
+import grpc.aio
 
 # Port registry to ensure unique ports across services
 SERVICE_PORTS = {
@@ -116,3 +118,51 @@ def run_service(server: grpc.Server, service_name: str, port: Optional[int] = No
         print(f"\nStopping {service_name} Service...")
         server.stop(0)
         print(f"{service_name} Service stopped.")
+
+
+def create_grpc_aio_server(
+    servicer,
+    port: Optional[int] = None,
+    service_name: Optional[str] = None,
+) -> grpc.aio.Server:
+    """
+    Create a grpc.aio server for async servicers (Tool, Guardrails).
+
+    The servicer must implement ``add_to_aio_server(server)`` (see BaseAioServicer).
+    """
+    if port is None:
+        if service_name is None:
+            raise ValueError("Either port or service_name must be provided")
+        port = get_service_port(service_name)
+
+    server = grpc.aio.server()
+    servicer.add_to_aio_server(server)
+    listen_addr = f"[::]:{port}"
+    server.add_insecure_port(listen_addr)
+    return server
+
+
+def run_aio_service_main(service_name: str, servicer_factory):
+    """
+    Entry point for asyncio-based services: ``asyncio.run(_main())``.
+
+    ``servicer_factory`` is a zero-argument callable returning the servicer instance.
+    """
+
+    async def _main() -> None:
+        port = get_service_port(service_name)
+        servicer = servicer_factory()
+        server = create_grpc_aio_server(servicer=servicer, port=port)
+        print(f"Starting {service_name} Service (grpc.aio) on port {port}")
+        await server.start()
+        print(f"{service_name} Service started. Press Ctrl+C to stop.")
+        try:
+            await server.wait_for_termination()
+        finally:
+            await server.stop(grace=5.0)
+            print(f"{service_name} Service stopped.")
+
+    try:
+        asyncio.run(_main())
+    except KeyboardInterrupt:
+        print(f"\nStopping {service_name} Service...")

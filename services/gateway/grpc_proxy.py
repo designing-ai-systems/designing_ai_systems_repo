@@ -37,7 +37,12 @@ class GenericProxy:
         return metadata.get("x-target-service")
 
     def _forward_request(self, service_name: str, stub_factory, method_name: str, request, context):
-        """Forward request to backend service."""
+        """
+        Forward request to backend service.
+
+        Uses the synchronous client stack; backends may be grpc.aio servers
+        (Tool, Guardrails) — wire-level compatibility is supported by grpcio.
+        """
         try:
             backend_addr = self.registry.get_platform_service_address(service_name)
             channel = grpc.insecure_channel(backend_addr)

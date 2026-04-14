@@ -1,8 +1,11 @@
 """
-Guardrails Service — gRPC service implementation.
+Guardrails Service — gRPC service implementation (grpc.aio).
 
 Thin translation layer: receives proto requests, delegates to
 PolicyStore for evaluation, returns proto responses.
+
+Async servicers align with the book's await-based guardrail examples
+(Listings 6.19–6.23).
 
 Book: "Designing AI Systems" (https://www.manning.com/books/designing-ai-systems)
   - Listing 6.19: GuardrailsService gRPC contract
@@ -15,11 +18,12 @@ import logging
 import re
 
 import grpc
+import grpc.aio
 
 from proto import guardrails_pb2, guardrails_pb2_grpc
 from services.guardrails.models import PolicyResult, ViolationRecord
 from services.guardrails.store import InMemoryPolicyStore, PolicyStore
-from services.shared.servicer_base import BaseServicer
+from services.shared.servicer_base import BaseAioServicer
 
 logger = logging.getLogger(__name__)
 
@@ -36,16 +40,14 @@ PII_PATTERNS = [
 ]
 
 
-class GuardrailsServiceImpl(guardrails_pb2_grpc.GuardrailsServiceServicer, BaseServicer):
+class GuardrailsServiceImpl(guardrails_pb2_grpc.GuardrailsServiceServicer, BaseAioServicer):
     def __init__(self, policy_store: PolicyStore | None = None):
         self.policy_store = policy_store or InMemoryPolicyStore()
 
-    def add_to_server(self, server: grpc.Server):
+    def add_to_aio_server(self, server: grpc.aio.Server) -> None:
         guardrails_pb2_grpc.add_GuardrailsServiceServicer_to_server(self, server)
 
-    # --- Input validation (Listing 6.20, 6.21) ---
-
-    def ValidateInput(self, request, context):
+    async def ValidateInput(self, request, context):
         try:
             triggered = []
             for check in request.checks:
@@ -75,9 +77,7 @@ class GuardrailsServiceImpl(guardrails_pb2_grpc.GuardrailsServiceServicer, BaseS
             context.set_details(str(e))
             return guardrails_pb2.ValidateInputResponse(allowed=True)
 
-    # --- Output filtering (Listing 6.23) ---
-
-    def FilterOutput(self, request, context):
+    async def FilterOutput(self, request, context):
         try:
             content = request.content
             applied = []
@@ -99,9 +99,7 @@ class GuardrailsServiceImpl(guardrails_pb2_grpc.GuardrailsServiceServicer, BaseS
             context.set_details(str(e))
             return guardrails_pb2.FilterOutputResponse(content=request.content, modified=False)
 
-    # --- Policy check (Listing 6.19) ---
-
-    def CheckPolicy(self, request, context):
+    async def CheckPolicy(self, request, context):
         try:
             policy = self.policy_store.get_policy(request.policy_name)
             if not policy:
@@ -123,9 +121,7 @@ class GuardrailsServiceImpl(guardrails_pb2_grpc.GuardrailsServiceServicer, BaseS
             context.set_details(str(e))
             return guardrails_pb2.CheckPolicyResponse(allowed=True)
 
-    # --- Violation reporting ---
-
-    def ReportViolation(self, request, context):
+    async def ReportViolation(self, request, context):
         try:
             record = ViolationRecord(
                 policy_name=request.policy_name,

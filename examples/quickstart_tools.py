@@ -7,8 +7,8 @@ Demonstrates:
   3. Guardrail input validation (prompt injection, PII detection)
   4. Guardrail output filtering (PII redaction)
   5. Policy-based access control
-  6. Tool execution through the platform
-  7. Circuit breaker observation
+  6. Tool execution through the platform (with credential injection)
+  7. Policy check with a seeded booking-rules policy (Listing 6.19)
 
 All functionality runs in-process (no external dependencies needed).
 
@@ -17,13 +17,15 @@ Book: "Designing AI Systems" (https://www.manning.com/books/designing-ai-systems
   - Listing 6.3: ToolBehavior, RateLimits, CostMetadata
   - Listing 6.7: Tool discovery by namespace/capabilities
   - Listing 6.12: Tool execution
-  - Listing 6.14: CredentialStore interface
-  - Listing 6.18: CircuitBreaker
+  - Listing 6.13: credential_ref on registration
+  - Listing 6.14: CredentialStore (demo seeds scheduling-api-prod in the Tool thread)
+  - Listing 6.18: CircuitBreaker (covered in unit tests; not toggled in this script)
   - Listing 6.19: GuardrailsService policy check
   - Listing 6.20: Input validation
   - Listing 6.23: Output filtering / PII redaction
 """
 
+import asyncio
 import sys
 import threading
 import time
@@ -33,9 +35,54 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from genai_platform import GenAIPlatform
 from services.gateway.main import main as start_gateway
-from services.guardrails.main import main as start_guardrails_service
-from services.tools.main import main as start_tool_service
+from services.guardrails.models import PolicyDefinition
+from services.guardrails.service import GuardrailsServiceImpl
+from services.guardrails.store import InMemoryPolicyStore
+from services.shared.server import create_grpc_aio_server, get_service_port, run_aio_service_main
+from services.tools.credential_store import InMemoryCredentialStore
 from services.tools.models import CostMetadata, RateLimits, ToolBehavior
+from services.tools.service import ToolServiceImpl
+
+
+async def _tools_quickstart_main() -> None:
+    """Tool Service with Listing 6.14 store pre-seeded for Listing 6.13 credential_ref."""
+    port = get_service_port("tools")
+    cred_store = InMemoryCredentialStore()
+    await cred_store.store(
+        "scheduling-api-prod",
+        "api_key",
+        "demo-scheduling-api-key",
+        allowed_tools=["healthcare.scheduling.book_appointment"],
+    )
+    servicer = ToolServiceImpl(credential_store=cred_store)
+    server = create_grpc_aio_server(servicer=servicer, port=port, service_name="tools")
+    print(f"Starting tools Service (grpc.aio) on port {port}")
+    await server.start()
+    print("tools Service started. Press Ctrl+C to stop.")
+    try:
+        await server.wait_for_termination()
+    finally:
+        await server.stop(grace=5.0)
+        print("tools Service stopped.")
+
+
+def start_tools_with_seeded_credentials():
+    try:
+        asyncio.run(_tools_quickstart_main())
+    except KeyboardInterrupt:
+        print("\nStopping tools Service...")
+
+
+def start_guardrails_with_booking_policy():
+    """Same as guardrails main but seeds booking-rules (Listing 6.19) for the demo."""
+    store = InMemoryPolicyStore()
+    store.add_policy(
+        PolicyDefinition(
+            name="booking-rules",
+            rules=[{"type": "required_field", "field": "referral_id"}],
+        )
+    )
+    run_aio_service_main("guardrails", lambda: GuardrailsServiceImpl(policy_store=store))
 
 
 def start_service_in_thread(service_func, name):
@@ -51,8 +98,8 @@ def main():
 
     # --- Start services ---
     print("\nStarting services...")
-    start_service_in_thread(start_tool_service, "ToolService")
-    start_service_in_thread(start_guardrails_service, "GuardrailsService")
+    start_service_in_thread(start_tools_with_seeded_credentials, "ToolService")
+    start_service_in_thread(start_guardrails_with_booking_policy, "GuardrailsService")
     time.sleep(1)
     start_service_in_thread(start_gateway, "Gateway")
     time.sleep(1)
@@ -169,6 +216,12 @@ def main():
     print(f"  Success: {exec_result.success}")
     print(f"  Result: {exec_result.result}")
     print(f"  Time: {exec_result.execution_time_ms}ms")
+    payload = exec_result.result if isinstance(exec_result.result, dict) else {}
+    if payload.get("credential_injected"):
+        print(
+            "  Credential injection (Listing 6.14): yes "
+            f"(type={payload.get('credential_type')})"
+        )
 
     # ========================================================
     # 4. Tool Validation

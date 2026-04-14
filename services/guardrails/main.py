@@ -2,19 +2,16 @@
 Guardrails Service — Main entry point.
 
 Enforces safety policies and compliance checks.
+Runs on grpc.aio (Listing 6.19).
 """
 
 from services.guardrails.service import GuardrailsServiceImpl
-from services.shared.server import create_grpc_server, get_service_port, run_service
+from services.shared.server import run_aio_service_main
 
 
 def main():
-    """Run the Guardrails Service server."""
-    service_name = "guardrails"
-    port = get_service_port(service_name)
-    servicer = GuardrailsServiceImpl()
-    server = create_grpc_server(servicer=servicer, port=port, service_name=service_name)
-    run_service(server, service_name, port)
+    """Run the Guardrails Service server (asyncio + grpc.aio)."""
+    run_aio_service_main("guardrails", GuardrailsServiceImpl)
 
 
 if __name__ == "__main__":

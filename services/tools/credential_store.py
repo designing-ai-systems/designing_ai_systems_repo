@@ -4,6 +4,11 @@ Credential Store — secure credential management for tool execution.
 Book: "Designing AI Systems" (https://www.manning.com/books/designing-ai-systems)
   - Listing 6.13: Tool registration references credentials by name
   - Listing 6.14: CredentialStore interface (store, retrieve, rotate)
+
+The interface is async because production backends (HashiCorp Vault,
+AWS Secrets Manager, HTTP token endpoints) perform network I/O. A sync
+API would block threads or force awkward thread-pool bridges; async lets
+callers compose with other async I/O (HTTP clients, gRPC aio, etc.).
 """
 
 import fnmatch
@@ -21,12 +26,12 @@ class Credential:
     allowed_tools: List[str] = field(default_factory=list)
 
 
-# Listing 6.14
+# Listing 6.14 (async — matches real secret-manager I/O)
 class CredentialStore(ABC):
     """Platform credential management."""
 
     @abstractmethod
-    def store(
+    async def store(
         self,
         name: str,
         credential_type: str,
@@ -36,10 +41,10 @@ class CredentialStore(ABC):
     ) -> None: ...
 
     @abstractmethod
-    def retrieve(self, name: str, requesting_tool: str) -> Credential: ...
+    async def retrieve(self, name: str, requesting_tool: str) -> Credential: ...
 
     @abstractmethod
-    def rotate(self, name: str, new_value: str) -> None: ...
+    async def rotate(self, name: str, new_value: str) -> None: ...
 
 
 class InMemoryCredentialStore(CredentialStore):
@@ -48,7 +53,7 @@ class InMemoryCredentialStore(CredentialStore):
     def __init__(self):
         self._credentials: Dict[str, Credential] = {}
 
-    def store(
+    async def store(
         self,
         name: str,
         credential_type: str,
@@ -64,7 +69,7 @@ class InMemoryCredentialStore(CredentialStore):
             allowed_tools=allowed_tools or [],
         )
 
-    def retrieve(self, name: str, requesting_tool: str) -> Credential:
+    async def retrieve(self, name: str, requesting_tool: str) -> Credential:
         cred = self._credentials.get(name)
         if cred is None:
             raise KeyError(f"Credential '{name}' not found")
@@ -75,7 +80,7 @@ class InMemoryCredentialStore(CredentialStore):
                 )
         return cred
 
-    def rotate(self, name: str, new_value: str) -> None:
+    async def rotate(self, name: str, new_value: str) -> None:
         cred = self._credentials.get(name)
         if cred is None:
             raise KeyError(f"Credential '{name}' not found")

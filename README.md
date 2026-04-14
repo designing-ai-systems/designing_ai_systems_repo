@@ -256,13 +256,13 @@ genai_platform/
 │   │   ├── models.py          #   Domain dataclasses (ChatResponse, ...)
 │   │   ├── service.py         #   gRPC servicer
 │   │   └── providers/         #   Provider adapters (OpenAI, Anthropic)
-│   ├── tools/                 # Tool Service (Chapter 6)
+│   ├── tools/                 # Tool Service (Chapter 6, grpc.aio)
 │   │   ├── models.py          #   Domain dataclasses (ToolDefinition, ...)
 │   │   ├── store.py           #   ToolRegistry ABC + InMemoryToolRegistry
 │   │   ├── credential_store.py#   CredentialStore ABC + InMemoryCredentialStore
 │   │   ├── circuit_breaker.py #   CircuitBreaker (closed/open/half-open)
 │   │   └── service.py         #   gRPC servicer
-│   └── guardrails/            # Guardrails Service (Chapter 6)
+│   └── guardrails/            # Guardrails Service (Chapter 6, grpc.aio)
 │       ├── models.py          #   Domain dataclasses (PolicyResult, ...)
 │       ├── store.py           #   PolicyStore ABC + InMemoryPolicyStore
 │       └── service.py         #   gRPC servicer
@@ -307,7 +307,7 @@ Each source file maps to specific listings in [Designing AI Systems](https://www
 | `services/guardrails/store.py` | 6.21 (input config), 6.23 (tiered handlers), 6.25 (human approval gate) |
 | `services/guardrails/service.py` | 6.19 (gRPC servicer), 6.20 (multi-point eval), 6.21 (input validation), 6.23 (output filtering) |
 | `genai_platform/clients/guardrails.py` | 6.19 (policy check), 6.20 (validate input), 6.23 (filter output) |
-| `examples/quickstart_tools.py` | 6.4, 6.7, 6.8, 6.12, 6.19, 6.20, 6.23 (end-to-end demo) |
+| `examples/quickstart_tools.py` | 6.4, 6.7, 6.8, 6.12–6.14 (execute + seeded CredentialStore), 6.19, 6.20, 6.23 (end-to-end demo) |
 
 ### Key Design Principles
 
@@ -332,6 +332,6 @@ pytest tests/ -v
 - **Session Service** (Chapter 4): Messages, pagination, model-managed memory, PostgreSQL
 - **Tool Service** (Chapter 6): Registration, discovery (namespace/capability/tags), versioning, sandboxed execution, circuit breaker, credential store
 - **Guardrails Service** (Chapter 6): Input validation (prompt injection, PII), output filtering (PII redaction), policy enforcement, violation reporting
-- **API Gateway**: gRPC proxy with service discovery (sessions, models, tools, guardrails)
+- **API Gateway**: gRPC proxy with service discovery (sessions, models, tools, guardrails); sync client to backends (tools/guardrails use grpc.aio servers, compatible at the wire level)
 - Data Service (Chapter 5): planned
 - Evaluation Service (Chapter 8): planned

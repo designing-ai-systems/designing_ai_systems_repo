@@ -2,19 +2,16 @@
 Tool Service — Main entry point.
 
 Manages tool registration, discovery, and execution.
+Runs on grpc.aio so handlers can await CredentialStore (Listing 6.14).
 """
 
-from services.shared.server import create_grpc_server, get_service_port, run_service
+from services.shared.server import run_aio_service_main
 from services.tools.service import ToolServiceImpl
 
 
 def main():
-    """Run the Tool Service server."""
-    service_name = "tools"
-    port = get_service_port(service_name)
-    servicer = ToolServiceImpl()
-    server = create_grpc_server(servicer=servicer, port=port, service_name=service_name)
-    run_service(server, service_name, port)
+    """Run the Tool Service server (asyncio + grpc.aio)."""
+    run_aio_service_main("tools", ToolServiceImpl)
 
 
 if __name__ == "__main__":

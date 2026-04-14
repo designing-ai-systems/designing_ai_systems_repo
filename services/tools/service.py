@@ -1,27 +1,33 @@
 """
-Tool Service — gRPC service implementation.
+Tool Service — gRPC service implementation (grpc.aio).
 
 Thin translation layer: receives proto requests, delegates to
 ToolRegistry/CredentialStore/CircuitBreaker, returns proto responses.
+
+Uses grpc.aio so RPC handlers can await Listing 6.14 (CredentialStore)
+during credential injection before external execution.
 
 Book: "Designing AI Systems" (https://www.manning.com/books/designing-ai-systems)
   - Listing 6.1: ToolService gRPC contract
   - Listing 6.4: Tool registration
   - Listing 6.7: Tool discovery
   - Listing 6.12: Sandboxed tool execution
+  - Listing 6.14: Credential retrieval at execution time
   - Listing 6.18: CircuitBreaker integration
 """
 
 import json
 import logging
 import time
+from typing import Optional
 
 import grpc
+import grpc.aio
 
 from proto import tools_pb2, tools_pb2_grpc
-from services.shared.servicer_base import BaseServicer
+from services.shared.servicer_base import BaseAioServicer
 from services.tools.circuit_breaker import CircuitBreaker
-from services.tools.credential_store import CredentialStore, InMemoryCredentialStore
+from services.tools.credential_store import Credential, CredentialStore, InMemoryCredentialStore
 from services.tools.models import (
     CostMetadata,
     ExecutionLimits,
@@ -35,7 +41,7 @@ from services.tools.store import InMemoryToolRegistry, ToolRegistry
 logger = logging.getLogger(__name__)
 
 
-class ToolServiceImpl(tools_pb2_grpc.ToolServiceServicer, BaseServicer):
+class ToolServiceImpl(tools_pb2_grpc.ToolServiceServicer, BaseAioServicer):
     def __init__(
         self,
         registry: ToolRegistry | None = None,
@@ -46,7 +52,7 @@ class ToolServiceImpl(tools_pb2_grpc.ToolServiceServicer, BaseServicer):
         self.credential_store = credential_store or InMemoryCredentialStore()
         self.circuit_breaker = circuit_breaker or CircuitBreaker()
 
-    def add_to_server(self, server: grpc.Server):
+    def add_to_aio_server(self, server: grpc.aio.Server) -> None:
         tools_pb2_grpc.add_ToolServiceServicer_to_server(self, server)
 
     # --- proto <-> domain ---
@@ -152,9 +158,9 @@ class ToolServiceImpl(tools_pb2_grpc.ToolServiceServicer, BaseServicer):
             )
         return proto
 
-    # --- RPC implementations ---
+    # --- RPC implementations (async / grpc.aio) ---
 
-    def RegisterTool(self, request, context):
+    async def RegisterTool(self, request, context):
         try:
             tool = self._proto_to_domain(request.tool)
             status = self.registry.register(tool)
@@ -166,7 +172,7 @@ class ToolServiceImpl(tools_pb2_grpc.ToolServiceServicer, BaseServicer):
             context.set_details(str(e))
             return tools_pb2.RegisterToolResponse()
 
-    def DiscoverTools(self, request, context):
+    async def DiscoverTools(self, request, context):
         try:
             tools = self.registry.discover(
                 namespace=request.namespace or None,
@@ -182,7 +188,7 @@ class ToolServiceImpl(tools_pb2_grpc.ToolServiceServicer, BaseServicer):
             context.set_details(str(e))
             return tools_pb2.DiscoverToolsResponse()
 
-    def ExecuteTool(self, request, context):
+    async def ExecuteTool(self, request, context):
         try:
             tool_name = request.tool_name
             if not self.circuit_breaker.allow_request(tool_name):
@@ -198,8 +204,22 @@ class ToolServiceImpl(tools_pb2_grpc.ToolServiceServicer, BaseServicer):
                 return tools_pb2.ExecuteToolResponse(success=False, error="Tool not found")
 
             args = json.loads(request.arguments_json) if request.arguments_json else {}
+            credential: Optional[Credential] = None
+            if tool.credential_ref:
+                try:
+                    credential = await self.credential_store.retrieve(
+                        tool.credential_ref, tool_name
+                    )
+                except KeyError:
+                    return tools_pb2.ExecuteToolResponse(
+                        success=False,
+                        error=f"Credential '{tool.credential_ref}' not found",
+                    )
+                except PermissionError as e:
+                    return tools_pb2.ExecuteToolResponse(success=False, error=str(e))
+
             start = time.time()
-            result = self._execute_sandboxed(tool, args)
+            result = await self._execute_sandboxed(tool, args, credential)
             elapsed_ms = int((time.time() - start) * 1000)
 
             self.circuit_breaker.record_result(tool_name, result.success)
@@ -216,7 +236,7 @@ class ToolServiceImpl(tools_pb2_grpc.ToolServiceServicer, BaseServicer):
             context.set_details(str(e))
             return tools_pb2.ExecuteToolResponse(success=False, error=str(e))
 
-    def ValidateTool(self, request, context):
+    async def ValidateTool(self, request, context):
         try:
             tool = self.registry.get(request.tool_name)
             if not tool:
@@ -238,16 +258,30 @@ class ToolServiceImpl(tools_pb2_grpc.ToolServiceServicer, BaseServicer):
             context.set_details(str(e))
             return tools_pb2.ValidateToolResponse(valid=False, errors=[str(e)])
 
-    def _execute_sandboxed(self, tool: ToolDefinition, args: dict) -> ToolExecutionResult:
+    async def _execute_sandboxed(
+        self,
+        tool: ToolDefinition,
+        args: dict,
+        credential: Optional[Credential],
+    ) -> ToolExecutionResult:
         """
         Sandboxed tool execution stub (Listing 6.12).
 
-        In production this would run in an isolated container/subprocess.
-        Here we return a placeholder result.
+        ``credential`` is populated when the tool declares credential_ref
+        (Listing 6.13); production adapters inject it into outbound HTTP.
         """
-        logger.info("Executing tool %s with args %s", tool.name, args)
+        logger.info(
+            "Executing tool %s with args %s (credential=%s)",
+            tool.name,
+            args,
+            credential.name if credential else None,
+        )
+        payload = {"status": "executed", "tool": tool.name, "args": args}
+        if credential is not None:
+            payload["credential_injected"] = True
+            payload["credential_type"] = credential.credential_type
         return ToolExecutionResult(
             tool_name=tool.name,
             success=True,
-            result={"status": "executed", "tool": tool.name, "args": args},
+            result=payload,
         )
