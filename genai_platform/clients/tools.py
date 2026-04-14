@@ -190,17 +190,6 @@ class ToolClient(BaseClient):
         response = self._stub.ValidateTool(request, metadata=self.metadata)
         return {"valid": response.valid, "errors": list(response.errors)}
 
-    # --- Deprecation (Listing 6.11) ---
-
-    def deprecate(self, name: str, version: str, sunset_date: str, migration_guide: str) -> bool:
-        """
-        Mark tool versions as deprecated (client-side convenience).
-
-        Note: The gRPC contract doesn't include a deprecate RPC.
-        This is a placeholder that logs a warning.
-        """
-        return True
-
     # --- helpers ---
 
     def _proto_to_domain(self, proto: tools_pb2.ToolDefinition) -> ToolDefinition:

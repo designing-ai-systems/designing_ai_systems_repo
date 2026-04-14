@@ -26,6 +26,13 @@ class TestGet:
         assert tool.version == "2.0.0"
         assert tool.description == "v2"
 
+    def test_get_latest_uses_semver_not_string_order(self):
+        registry = InMemoryToolRegistry()
+        registry.register(ToolDefinition(name="test.tool", version="2.0.0", description="v2"))
+        registry.register(ToolDefinition(name="test.tool", version="10.0.0", description="v10"))
+        tool = registry.get("test.tool")
+        assert tool.version == "10.0.0"
+
     def test_get_specific_version(self):
         registry = InMemoryToolRegistry()
         registry.register(ToolDefinition(name="test.tool", version="1.0.0", description="v1"))
@@ -93,6 +100,56 @@ class TestDiscover:
         registry = self._populated_registry()
         tools = registry.discover()
         assert len(tools) == 3
+
+
+class TestDiscoverVersionConstraint:
+    """Listing 6.10: version-constrained discovery."""
+
+    def _registry_with_versions(self):
+        registry = InMemoryToolRegistry()
+        for v in ["1.0.0", "1.1.0", "2.0.0", "2.1.0", "3.0.0"]:
+            registry.register(ToolDefinition(name="test.tool", version=v, description=f"v{v}"))
+        return registry
+
+    def test_caret_constraint_matches_same_major(self):
+        registry = self._registry_with_versions()
+        tools = registry.discover(version_constraint="^1.0.0")
+        versions = {t.version for t in tools}
+        assert versions == {"1.0.0", "1.1.0"}
+
+    def test_caret_constraint_excludes_other_major(self):
+        registry = self._registry_with_versions()
+        tools = registry.discover(version_constraint="^2.0.0")
+        versions = {t.version for t in tools}
+        assert versions == {"2.0.0", "2.1.0"}
+
+    def test_range_constraint_gte_lt(self):
+        registry = self._registry_with_versions()
+        tools = registry.discover(version_constraint=">=1.0.0 <3.0.0")
+        versions = {t.version for t in tools}
+        assert versions == {"1.0.0", "1.1.0", "2.0.0", "2.1.0"}
+
+    def test_exact_version_constraint(self):
+        registry = self._registry_with_versions()
+        tools = registry.discover(version_constraint="2.1.0")
+        assert len(tools) == 1
+        assert tools[0].version == "2.1.0"
+
+    def test_no_constraint_returns_latest_only(self):
+        registry = self._registry_with_versions()
+        tools = registry.discover()
+        assert len(tools) == 1
+        assert tools[0].version == "3.0.0"
+
+    def test_constraint_with_namespace_filter(self):
+        registry = InMemoryToolRegistry()
+        registry.register(ToolDefinition(name="a.tool", version="1.0.0"))
+        registry.register(ToolDefinition(name="a.tool", version="2.0.0"))
+        registry.register(ToolDefinition(name="b.tool", version="1.0.0"))
+        tools = registry.discover(namespace="a.*", version_constraint="^1.0.0")
+        assert len(tools) == 1
+        assert tools[0].name == "a.tool"
+        assert tools[0].version == "1.0.0"
 
 
 class TestDeprecate:

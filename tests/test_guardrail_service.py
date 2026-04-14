@@ -77,6 +77,21 @@ class TestValidateInput:
         )
         assert resp.allowed is True
 
+    async def test_unrecognized_check_logs_warning(self, caplog):
+        import logging
+
+        svc = GuardrailsServiceImpl()
+        with caplog.at_level(logging.WARNING):
+            resp = await svc.ValidateInput(
+                guardrails_pb2.ValidateInputRequest(
+                    content="Normal message",
+                    checks=["topic_classifier"],
+                ),
+                FakeContext(),
+            )
+        assert resp.allowed is True
+        assert any("topic_classifier" in r.message for r in caplog.records)
+
 
 class TestFilterOutput:
     async def test_pii_redaction(self):

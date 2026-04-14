@@ -10,6 +10,7 @@ Book: "Designing AI Systems" (https://www.manning.com/books/designing-ai-systems
   - Listing 6.23: Tiered violation handling
 """
 
+import json
 from typing import Any, Dict, List, Optional
 
 from proto import guardrails_pb2, guardrails_pb2_grpc
@@ -74,8 +75,6 @@ class GuardrailsClient(BaseClient):
         context: Optional[Dict[str, str]] = None,
         arguments: Optional[Dict[str, Any]] = None,
     ) -> PolicyResult:
-        import json
-
         request = guardrails_pb2.CheckPolicyRequest(
             policy_name=policy_name,
             action=action,

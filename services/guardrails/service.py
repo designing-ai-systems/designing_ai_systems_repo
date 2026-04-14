@@ -50,6 +50,7 @@ class GuardrailsServiceImpl(guardrails_pb2_grpc.GuardrailsServiceServicer, BaseA
     async def ValidateInput(self, request, context):
         try:
             triggered = []
+            known_checks = {"prompt_injection", "pii_detection"}
             for check in request.checks:
                 if check == "prompt_injection":
                     for pattern in PROMPT_INJECTION_PATTERNS:
@@ -61,6 +62,8 @@ class GuardrailsServiceImpl(guardrails_pb2_grpc.GuardrailsServiceServicer, BaseA
                         if re.search(pattern, request.content):
                             triggered.append("pii_detection")
                             break
+                elif check not in known_checks:
+                    logger.warning("Unrecognized check type %r — skipped", check)
 
             allowed = len(triggered) == 0
             reason = ""
