@@ -300,7 +300,7 @@ Each source file maps to specific listings in [Designing AI Systems](https://www
 | `services/tools/credential_store.py` | 6.13 (credential ref), 6.14 (CredentialStore interface) |
 | `services/tools/circuit_breaker.py` | 6.18 (CircuitBreaker: closed/open/half-open) |
 | `services/tools/service.py` | 6.1 (gRPC servicer), 6.4 (register), 6.7 (discover), 6.12 (execute), 6.18 (circuit breaker) |
-| `genai_platform/clients/tools.py` | 6.4 (register), 6.7 (discover), 6.11 (deprecate), 6.12 (execute) |
+| `genai_platform/clients/tools.py` | 6.4 (register), 6.7 (discover), 6.12 (execute) |
 | **Guardrails Service (Chapter 6)** | |
 | `proto/guardrails.proto` | 6.19 (GuardrailsService contract) |
 | `services/guardrails/models.py` | 6.19 (PolicyResult), 6.21 (GuardrailCheck), 6.23 (tiered handling) |
@@ -333,5 +333,7 @@ pytest tests/ -v
 - **Tool Service** (Chapter 6): Registration, discovery (namespace/capability/tags), versioning, sandboxed execution, circuit breaker, credential store
 - **Guardrails Service** (Chapter 6): Input validation (prompt injection, PII), output filtering (PII redaction), policy enforcement, violation reporting
 - **API Gateway**: gRPC proxy with service discovery (sessions, models, tools, guardrails); sync client to backends (tools/guardrails use grpc.aio servers, compatible at the wire level)
-- Data Service (Chapter 5): planned
-- Evaluation Service (Chapter 8): planned
+- Data Service (Chapter 5): planned -- knowledge indexes, ingestion pipeline, chunking, embeddings
+- Observability & Experimentation (Chapter 7): planned -- traces, spans, structured logging, experimentation
+- Workflow Service (Chapter 8): planned -- runtime server, async jobs, container deployment
+- AI Assistant (Chapter 9): planned -- agent loop, memory, knowledge, tools, safety, observability
