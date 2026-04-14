@@ -1,0 +1,75 @@
+// Guardrails Service Protocol Buffer definitions.
+//
+// Book: "Designing AI Systems" (https://www.manning.com/books/designing-ai-systems)
+//   Listing 6.19: GuardrailsService gRPC contract
+
+syntax = "proto3";
+
+package guardrails;
+
+// Listing 6.19
+service GuardrailsService {
+    rpc ValidateInput(ValidateInputRequest) returns (ValidateInputResponse);
+    rpc FilterOutput(FilterOutputRequest) returns (FilterOutputResponse);
+    rpc CheckPolicy(CheckPolicyRequest) returns (CheckPolicyResponse);
+    rpc ReportViolation(ReportViolationRequest) returns (ReportViolationResponse);
+}
+
+// --- ValidateInput ---
+
+message ValidateInputRequest {
+    string content = 1;
+    repeated string checks = 2;
+    map<string, string> context = 3;
+}
+
+message ValidateInputResponse {
+    bool allowed = 1;
+    string denial_reason = 2;
+    repeated string triggered_checks = 3;
+}
+
+// --- FilterOutput ---
+
+message FilterOutputRequest {
+    string content = 1;
+    repeated string filters = 2;
+    map<string, string> context = 3;
+}
+
+message FilterOutputResponse {
+    string content = 1;
+    bool modified = 2;
+    repeated string applied_filters = 3;
+}
+
+// --- CheckPolicy (Listing 6.19) ---
+
+message CheckPolicyRequest {
+    string policy_name = 1;
+    string action = 2;
+    map<string, string> context = 3;
+    string arguments_json = 4;
+}
+
+message CheckPolicyResponse {
+    bool allowed = 1;
+    string denial_reason = 2;
+    repeated string violated_rules = 3;
+    string suggested_action = 4;
+}
+
+// --- ReportViolation ---
+
+message ReportViolationRequest {
+    string policy_name = 1;
+    string action = 2;
+    string severity = 3;
+    map<string, string> context = 4;
+    string details = 5;
+}
+
+message ReportViolationResponse {
+    string violation_id = 1;
+    bool recorded = 2;
+}

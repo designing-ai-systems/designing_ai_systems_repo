@@ -9,7 +9,7 @@ from typing import Dict, Optional
 
 import grpc
 
-from proto import models_pb2_grpc, sessions_pb2_grpc
+from proto import guardrails_pb2_grpc, models_pb2_grpc, sessions_pb2_grpc, tools_pb2_grpc
 from services.gateway.registry import ServiceRegistry
 
 
@@ -27,6 +27,8 @@ class GenericProxy:
         self._stub_factories: Dict[str, callable] = {
             "sessions": lambda channel: sessions_pb2_grpc.SessionServiceStub(channel),
             "models": lambda channel: models_pb2_grpc.ModelServiceStub(channel),
+            "tools": lambda channel: tools_pb2_grpc.ToolServiceStub(channel),
+            "guardrails": lambda channel: guardrails_pb2_grpc.GuardrailsServiceStub(channel),
         }
 
     def _extract_target_service(self, context) -> Optional[str]:
@@ -153,5 +155,17 @@ class ModelServiceProxy(GenericServiceProxy, models_pb2_grpc.ModelServiceService
 
     All methods automatically forwarded - no manual implementation needed!
     """
+
+    pass
+
+
+class ToolServiceProxy(GenericServiceProxy, tools_pb2_grpc.ToolServiceServicer):
+    """Proxy handler for Tool Service."""
+
+    pass
+
+
+class GuardrailsServiceProxy(GenericServiceProxy, guardrails_pb2_grpc.GuardrailsServiceServicer):
+    """Proxy handler for Guardrails Service."""
 
     pass
