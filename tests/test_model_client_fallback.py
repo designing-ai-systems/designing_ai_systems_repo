@@ -273,3 +273,41 @@ class TestAllFallbacksFail:
             )
         # primary + 2 fallbacks = 3 attempts
         assert client._stub.Chat.call_count == 3
+
+
+class TestBuildChatRequestTools:
+    """ChatRequest must carry OpenAI-style tool definitions for Model Service."""
+
+    def test_build_chat_request_serializes_tools(self):
+        client = _make_client()
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "scheduling_check_availability",
+                    "description": "Check provider availability.",
+                    "parameters": {
+                        "type": "object",
+                        "required": ["provider_id"],
+                        "properties": {
+                            "provider_id": {"type": "string"},
+                            "date_range": {"type": "string"},
+                        },
+                    },
+                },
+            }
+        ]
+        req = client._build_chat_request(
+            "gpt-4o",
+            [{"role": "user", "content": "Use the tool."}],
+            0.0,
+            256,
+            tools,
+            None,
+            None,
+        )
+        assert len(req.tools) == 1
+        assert req.tools[0].type == "function"
+        assert req.tools[0].function.name == "scheduling_check_availability"
+        assert req.tools[0].function.description == "Check provider availability."
+        assert '"provider_id"' in req.tools[0].function.parameters_json

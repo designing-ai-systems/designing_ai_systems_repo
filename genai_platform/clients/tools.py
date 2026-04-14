@@ -11,9 +11,10 @@ Book: "Designing AI Systems" (https://www.manning.com/books/designing-ai-systems
 """
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from proto import tools_pb2, tools_pb2_grpc
+from services.tools.model_sync import tool_definitions_to_model_tools
 from services.tools.models import (
     CostMetadata,
     ExecutionLimits,
@@ -125,6 +126,38 @@ class ToolClient(BaseClient):
         )
         response = self._stub.DiscoverTools(request, metadata=self.metadata)
         return [self._proto_to_domain(t) for t in response.tools]
+
+    def build_model_tools(
+        self,
+        *,
+        names: Optional[List[str]] = None,
+        namespace: Optional[str] = None,
+        capabilities: Optional[List[str]] = None,
+        tags: Optional[List[str]] = None,
+        read_only: bool = False,
+        version_constraint: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, str]]:
+        """
+        Discover tools from the registry and convert them to Model Service ``tools`` payloads.
+
+        Uses the same filters as :meth:`discover`. If *names* is set, only those
+        platform tool names are kept (must appear in discovery results).
+
+        Returns:
+            (model_tools, llm_to_platform) where *llm_to_platform* maps LLM function
+            name -> Tool Service ``tool_name`` for :meth:`execute`.
+        """
+        definitions = self.discover(
+            namespace=namespace,
+            capabilities=capabilities,
+            tags=tags,
+            read_only=read_only,
+            version_constraint=version_constraint,
+        )
+        if names is not None:
+            wanted = set(names)
+            definitions = [d for d in definitions if d.name in wanted]
+        return tool_definitions_to_model_tools(definitions)
 
     # --- Execution (Listing 6.12) ---
 

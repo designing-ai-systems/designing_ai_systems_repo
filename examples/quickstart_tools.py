@@ -9,8 +9,10 @@ Demonstrates:
   5. Policy-based access control
   6. Tool execution through the platform (with credential injection)
   7. Policy check with a seeded booking-rules policy (Listing 6.19)
+  8. Optional: Model tools synced from Tool Service (discover), chat, then execute (needs OPENAI_API_KEY)
 
-All functionality runs in-process (no external dependencies needed).
+Sections 1–7 run in-process. Section 8 calls a live model via the Model Service when OPENAI_API_KEY
+is set (OpenAI returns structured tool_calls through this stack; the Anthropic adapter here does not).
 
 Book: "Designing AI Systems" (https://www.manning.com/books/designing-ai-systems)
   - Listing 6.2: ToolDefinition (identity + schema)
@@ -23,9 +25,14 @@ Book: "Designing AI Systems" (https://www.manning.com/books/designing-ai-systems
   - Listing 6.19: GuardrailsService policy check
   - Listing 6.20: Input validation
   - Listing 6.23: Output filtering / PII redaction
+  - Listing 3.6 / 3.18: ChatRequest.tools + ModelClient.chat(tools=...)
 """
 
+from __future__ import annotations
+
 import asyncio
+import json
+import os
 import sys
 import threading
 import time
@@ -38,10 +45,114 @@ from services.gateway.main import main as start_gateway
 from services.guardrails.models import PolicyDefinition
 from services.guardrails.service import GuardrailsServiceImpl
 from services.guardrails.store import InMemoryPolicyStore
+from services.models.main import main as start_model_service
 from services.shared.server import create_grpc_aio_server, get_service_port, run_aio_service_main
 from services.tools.credential_store import InMemoryCredentialStore
+from services.tools.model_sync import platform_tool_name_to_llm_function_name
 from services.tools.models import CostMetadata, RateLimits, ToolBehavior
 from services.tools.service import ToolServiceImpl
+
+# Platform tool used in §8; model-facing name is derived via platform_tool_name_to_llm_function_name.
+DEMO_PLATFORM_TOOL = "healthcare.scheduling.check_availability"
+
+
+def demo_model_service_with_tools(platform: GenAIPlatform) -> None:
+    """
+    Send tool definitions on ChatRequest, let the model emit a tool call, execute via Tool Service,
+    send the tool result back, and print the model's final reply.
+    """
+    if not os.environ.get("OPENAI_API_KEY"):
+        print(
+            "  Skipped: set OPENAI_API_KEY to run Model Service + tools demo "
+            "(gpt-4o returns tool_calls; Anthropic adapter in this repo does not populate tool_calls)."
+        )
+        return
+
+    models = platform.models.list_models()
+    if not any(m.name == "gpt-4o" for m in models):
+        print("  Skipped: gpt-4o not available (OpenAI provider not configured).")
+        return
+
+    tools, llm_to_platform = platform.tools.build_model_tools(names=[DEMO_PLATFORM_TOOL])
+    if not tools:
+        print(
+            f"  Skipped: {DEMO_PLATFORM_TOOL!r} not returned by discover "
+            "(register it in section 1 before this demo)."
+        )
+        return
+
+    llm_fn = platform_tool_name_to_llm_function_name(DEMO_PLATFORM_TOOL)
+    print(f"  Synced model tools from Tool Service (LLM function {llm_fn!r} -> {DEMO_PLATFORM_TOOL!r}).")
+
+    user_text = (
+        f"You must call {llm_fn} with provider_id dr-smith and date_range next week. "
+        "Reply only via the tool call first."
+    )
+    try:
+        first = platform.models.chat(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": user_text}],
+            temperature=0.0,
+            max_tokens=256,
+            tools=tools,
+        )
+    except Exception as exc:  # noqa: BLE001 — demo script: show RPC/API errors clearly
+        print(f"  Model call failed: {exc}")
+        return
+
+    if not first.tool_calls:
+        print(f"  Model returned no tool_calls (content={first.content!r}).")
+        return
+
+    tc = first.tool_calls[0]
+    fn = tc["function"]["name"]
+    platform_tool = llm_to_platform.get(fn)
+    if not platform_tool:
+        print(f"  Unknown LLM tool name {fn!r}; expected synced name {llm_fn!r}.")
+        return
+
+    raw_args = tc["function"].get("arguments") or "{}"
+    try:
+        args = json.loads(raw_args)
+    except json.JSONDecodeError:
+        print(f"  Could not parse tool arguments JSON: {raw_args!r}")
+        return
+
+    print(f"  Model tool_call: {fn} -> platform tool {platform_tool}")
+    print(f"  Arguments: {args}")
+
+    exec_result = platform.tools.execute(tool_name=platform_tool, arguments=args)
+    print(f"  Tool Service execute success={exec_result.success} time_ms={exec_result.execution_time_ms}")
+    print(f"  Tool result: {exec_result.result}")
+
+    tool_payload = exec_result.result if isinstance(exec_result.result, dict) else {"result": exec_result.result}
+    assistant_msg: dict = {"role": "assistant", "tool_calls": first.tool_calls}
+    if first.content:
+        assistant_msg["content"] = first.content
+
+    follow_up = [
+        {"role": "user", "content": user_text},
+        assistant_msg,
+        {
+            "role": "tool",
+            "tool_call_id": tc["id"],
+            "name": fn,
+            "content": json.dumps(tool_payload),
+        },
+    ]
+    try:
+        second = platform.models.chat(
+            model="gpt-4o",
+            messages=follow_up,
+            temperature=0.0,
+            max_tokens=256,
+            tools=tools,
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"  Follow-up model call failed: {exc}")
+        return
+
+    print(f"  Model reply after tool result: {second.content!r}")
 
 
 async def _tools_quickstart_main() -> None:
@@ -100,6 +211,7 @@ def main():
     print("\nStarting services...")
     start_service_in_thread(start_tools_with_seeded_credentials, "ToolService")
     start_service_in_thread(start_guardrails_with_booking_policy, "GuardrailsService")
+    start_service_in_thread(start_model_service, "ModelService")
     time.sleep(1)
     start_service_in_thread(start_gateway, "Gateway")
     time.sleep(1)
@@ -311,6 +423,13 @@ def main():
     if not result.allowed:
         print(f"  Reason: {result.denial_reason}")
         print(f"  Violated: {result.violated_rules}")
+
+    # ========================================================
+    # 8. Model Service + tools + Tool Service (optional, OPENAI_API_KEY)
+    # ========================================================
+    section("8. Model Service + tools (ChatRequest.tools → tool_calls → execute)")
+
+    demo_model_service_with_tools(platform)
 
     # ========================================================
     print("\n" + "=" * 60)
