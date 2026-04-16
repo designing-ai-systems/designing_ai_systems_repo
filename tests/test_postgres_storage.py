@@ -4,11 +4,16 @@ Auto-creates the 'genai_platform_test' database if PostgreSQL is running
 but the database doesn't exist yet. Schema is applied automatically by
 PostgresSessionStorage._create_tables().
 
-Skips all tests when PostgreSQL is unavailable (not installed, not running,
-or psycopg2 not installed) so CI / in-memory-only environments still pass.
+Set DB_TEST_URL to override the connection string (used in CI).
+Falls back to postgresql://localhost/genai_platform_test for local dev.
 """
 
+import os
+
 import pytest
+
+_DEFAULT_TEST_DB = "postgresql://localhost/genai_platform_test"
+TEST_DB = os.environ.get("DB_TEST_URL", _DEFAULT_TEST_DB)
 
 _pg_available = False
 
@@ -17,13 +22,13 @@ try:
     from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 
     try:
-        _conn = psycopg2.connect("postgresql://localhost/genai_platform_test")
+        _conn = psycopg2.connect(TEST_DB)
         _conn.close()
         _pg_available = True
     except psycopg2.OperationalError:
-        # Database doesn't exist yet — try to create it
         try:
-            _conn = psycopg2.connect("postgresql://localhost/postgres")
+            _base_url = TEST_DB.rsplit("/", 1)[0] + "/postgres"
+            _conn = psycopg2.connect(_base_url)
             _conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
             with _conn.cursor() as cur:
                 cur.execute("CREATE DATABASE genai_platform_test")
@@ -39,8 +44,6 @@ pytestmark = pytest.mark.skipif(not _pg_available, reason="PostgreSQL test datab
 if _pg_available:
     from services.sessions.models import Function, Message, Session, ToolCall  # noqa: E402
     from services.sessions.postgres_store import PostgresSessionStorage  # noqa: E402
-
-TEST_DB = "postgresql://localhost/genai_platform_test"
 
 
 @pytest.fixture
