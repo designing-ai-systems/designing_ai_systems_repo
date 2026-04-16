@@ -36,8 +36,9 @@ except ImportError:
 
 pytestmark = pytest.mark.skipif(not _pg_available, reason="PostgreSQL test database unavailable")
 
-from services.sessions.models import Message, Session
-from services.sessions.postgres_store import PostgresSessionStorage
+if _pg_available:
+    from services.sessions.models import Function, Message, Session, ToolCall  # noqa: E402
+    from services.sessions.postgres_store import PostgresSessionStorage  # noqa: E402
 
 TEST_DB = "postgresql://localhost/genai_platform_test"
 
@@ -46,7 +47,6 @@ TEST_DB = "postgresql://localhost/genai_platform_test"
 def storage():
     store = PostgresSessionStorage(connection_string=TEST_DB)
     yield store
-    # Truncate all tables after each test for isolation
     with store.conn.cursor() as cur:
         cur.execute("TRUNCATE messages, memories, sessions CASCADE")
     store.conn.commit()
@@ -125,8 +125,6 @@ class TestMessages:
         assert total == 5
 
     def test_tool_call_messages(self, storage):
-        from services.sessions.models import Function, ToolCall
-
         storage.get_or_create_session(user_id="user-1", session_id="sess-1")
         tc = ToolCall(
             id="call_abc",

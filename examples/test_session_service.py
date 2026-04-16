@@ -22,7 +22,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from genai_platform import GenAIPlatform
-from services.gateway.main import main as start_gateway
 from services.gateway.registry import ServiceRegistry
 from services.gateway.servers import create_grpc_server as create_gateway_grpc
 from services.gateway.servers import create_http_server
@@ -425,7 +424,7 @@ def _insert_demo_data(storage):
             ),
             Message(
                 role="assistant",
-                content="Dr. Smith has openings on April 22nd at 9:00 AM, 11:30 AM, and 3:00 PM. Which works best?",
+                content="Dr. Smith has openings on April 22nd at 9 AM, 11:30 AM, and 3 PM.",
             ),
             Message(role="user", content="11:30 AM please. Also, I'm allergic to penicillin."),
             Message(
@@ -457,7 +456,7 @@ def _insert_demo_data(storage):
             Message(role="user", content="Can you remind me what medications I'm on?"),
             Message(
                 role="assistant",
-                content="You're currently taking lisinopril 10mg daily and metformin 500mg twice daily.",
+                content="You're taking lisinopril 10mg daily and metformin 500mg twice daily.",
             ),
         ],
     )
