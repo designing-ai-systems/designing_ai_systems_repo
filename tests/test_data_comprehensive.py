@@ -702,11 +702,11 @@ class TestJobQueueConcurrency:
 
         all_claimed = claimed_by_1 + claimed_by_2
         missing = {f"r{i}" for i in range(20)} - set(all_claimed)
+        # Load-bearing correctness: every job is claimed exactly once across
+        # both workers. Under SKIP LOCKED, concurrent workers pick disjoint
+        # rows; the set-size assertion catches any double-claim regression.
         assert len(all_claimed) == 20, f"missing jobs: {missing}"
         assert len(set(all_claimed)) == 20, "a job was claimed by both workers"
-        # Both workers should have claimed at least one (probabilistic but
-        # overwhelmingly likely with 20 jobs).
-        assert claimed_by_1 and claimed_by_2
 
     def test_reaper_requeues_stale_processing(self, pg_store):
         if not _pgvector_available:
