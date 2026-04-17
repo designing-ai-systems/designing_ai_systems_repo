@@ -27,12 +27,22 @@ pytest tests/test_data_comprehensive.py -v
 """
 
 import os
+import threading
 import time
+from datetime import datetime, timedelta
 from unittest.mock import MagicMock
 
 import pytest
 
-from services.data.models import Chunk, SearchResult
+from services.data.models import (
+    Chunk,
+    DocumentMetadata,
+    Index,
+    IndexConfig,
+    IngestJob,
+    JobPayload,
+    SearchResult,
+)
 from services.data.store import InMemoryVectorStore
 
 _DEFAULT_TEST_DB = "postgresql://localhost/genai_platform_test"
@@ -110,6 +120,9 @@ def _unit_vec(dim: int, idx: int) -> list[float]:
 # ---------------------------------------------------------------------------
 
 
+_PG_TRUNCATE = "TRUNCATE chunks, documents, ingest_jobs, data_indexes CASCADE"
+
+
 @pytest.fixture(params=["memory", "pgvector"])
 def store(request):
     if request.param == "memory":
@@ -120,9 +133,12 @@ def store(request):
         from services.data.pgvector_store import PgvectorStore
 
         s = PgvectorStore(connection_string=TEST_DB)
+        with s.conn.cursor() as cur:
+            cur.execute(_PG_TRUNCATE)
+        s.conn.commit()
         yield s
         with s.conn.cursor() as cur:
-            cur.execute("TRUNCATE chunks CASCADE")
+            cur.execute(_PG_TRUNCATE)
         s.conn.commit()
         s.conn.close()
 
@@ -135,9 +151,12 @@ def pg_store():
     from services.data.pgvector_store import PgvectorStore
 
     s = PgvectorStore(connection_string=TEST_DB)
+    with s.conn.cursor() as cur:
+        cur.execute(_PG_TRUNCATE)
+    s.conn.commit()
     yield s
     with s.conn.cursor() as cur:
-        cur.execute("TRUNCATE chunks CASCADE")
+        cur.execute(_PG_TRUNCATE)
     s.conn.commit()
     s.conn.close()
 
@@ -369,42 +388,45 @@ class TestEndToEndIngestion:
             return [[float(len(t) % 10)] * 4 for t in texts]
 
         svc = DataService(vector_store=store, embed_fn=fake_embed)
-        ctx = MagicMock()
-        ctx.invocation_metadata.return_value = [("x-target-service", "data")]
+        try:
+            ctx = MagicMock()
+            ctx.invocation_metadata.return_value = [("x-target-service", "data")]
 
-        config = data_pb2.IndexConfig(
-            name="e2e-idx",
-            chunk_size=20,
-            chunk_overlap=0,
-            embedding_model="fake",
-            embedding_dimensions=4,
-        )
-        svc.CreateIndex(data_pb2.CreateIndexRequest(config=config), ctx)
+            config = data_pb2.IndexConfig(
+                name="e2e-idx",
+                chunk_size=20,
+                chunk_overlap=0,
+                embedding_model="fake",
+                embedding_dimensions=4,
+            )
+            svc.CreateIndex(data_pb2.CreateIndexRequest(config=config), ctx)
 
-        resp = svc.IngestDocument(
-            data_pb2.IngestDocumentRequest(
-                index_name="e2e-idx",
-                filename="handbook.txt",
-                content=b"The company handbook covers travel policies and pet policies.",
-                document_id="doc-handbook",
-                metadata={"source": "hr"},
-            ),
-            ctx,
-        )
-        assert resp.job_id
+            resp = svc.IngestDocument(
+                data_pb2.IngestDocumentRequest(
+                    index_name="e2e-idx",
+                    filename="handbook.txt",
+                    content=b"The company handbook covers travel policies and pet policies.",
+                    document_id="doc-handbook",
+                    metadata={"source": "hr"},
+                ),
+                ctx,
+            )
+            assert resp.job_id
 
-        for _ in range(50):
-            job = svc.GetIngestJob(data_pb2.GetIngestJobRequest(job_id=resp.job_id), ctx)
-            if job.status in ("completed", "failed"):
-                break
-            time.sleep(0.1)
-        assert job.status == "completed"
+            for _ in range(50):
+                job = svc.GetIngestJob(data_pb2.GetIngestJobRequest(job_id=resp.job_id), ctx)
+                if job.status in ("completed", "failed"):
+                    break
+                time.sleep(0.1)
+            assert job.status == "completed", job.error
 
-        search_resp = svc.Search(
-            data_pb2.SearchRequest(index_name="e2e-idx", query="travel", top_k=5),
-            ctx,
-        )
-        assert len(search_resp.results) >= 1
+            search_resp = svc.Search(
+                data_pb2.SearchRequest(index_name="e2e-idx", query="travel", top_k=5),
+                ctx,
+            )
+            assert len(search_resp.results) >= 1
+        finally:
+            svc.close(timeout=5)
 
     def test_ingest_multiple_docs_and_delete(self, store):
         from proto import data_pb2
@@ -414,42 +436,308 @@ class TestEndToEndIngestion:
             return [[1.0, 0.0, 0.0, 0.0]] * len(texts)
 
         svc = DataService(vector_store=store, embed_fn=fake_embed)
-        ctx = MagicMock()
-        ctx.invocation_metadata.return_value = [("x-target-service", "data")]
+        try:
+            ctx = MagicMock()
+            ctx.invocation_metadata.return_value = [("x-target-service", "data")]
 
-        config = data_pb2.IndexConfig(
-            name="multi-idx",
-            chunk_size=50,
-            chunk_overlap=0,
-            embedding_model="fake",
-            embedding_dimensions=4,
-        )
-        svc.CreateIndex(data_pb2.CreateIndexRequest(config=config), ctx)
+            config = data_pb2.IndexConfig(
+                name="multi-idx",
+                chunk_size=50,
+                chunk_overlap=0,
+                embedding_model="fake",
+                embedding_dimensions=4,
+            )
+            svc.CreateIndex(data_pb2.CreateIndexRequest(config=config), ctx)
 
-        for doc_id, content in [("d1", b"First document."), ("d2", b"Second document.")]:
-            resp = svc.IngestDocument(
-                data_pb2.IngestDocumentRequest(
-                    index_name="multi-idx",
-                    filename=f"{doc_id}.txt",
-                    content=content,
-                    document_id=doc_id,
-                ),
+            for doc_id, content in [("d1", b"First document."), ("d2", b"Second document.")]:
+                resp = svc.IngestDocument(
+                    data_pb2.IngestDocumentRequest(
+                        index_name="multi-idx",
+                        filename=f"{doc_id}.txt",
+                        content=content,
+                        document_id=doc_id,
+                    ),
+                    ctx,
+                )
+                for _ in range(50):
+                    job = svc.GetIngestJob(data_pb2.GetIngestJobRequest(job_id=resp.job_id), ctx)
+                    if job.status in ("completed", "failed"):
+                        break
+                    time.sleep(0.1)
+                assert job.status == "completed", job.error
+
+            docs = svc.ListDocuments(data_pb2.ListDocumentsRequest(index_name="multi-idx"), ctx)
+            assert len(docs.documents) == 2
+
+            svc.DeleteDocument(
+                data_pb2.DeleteDocumentRequest(index_name="multi-idx", document_id="d1"),
                 ctx,
             )
-            for _ in range(50):
-                job = svc.GetIngestJob(data_pb2.GetIngestJobRequest(job_id=resp.job_id), ctx)
-                if job.status in ("completed", "failed"):
-                    break
-                time.sleep(0.1)
-            assert job.status == "completed"
+            docs = svc.ListDocuments(data_pb2.ListDocumentsRequest(index_name="multi-idx"), ctx)
+            assert len(docs.documents) == 1
+            assert docs.documents[0].document_id == "d2"
+        finally:
+            svc.close(timeout=5)
 
-        docs = svc.ListDocuments(data_pb2.ListDocumentsRequest(index_name="multi-idx"), ctx)
-        assert len(docs.documents) == 2
 
-        svc.DeleteDocument(
-            data_pb2.DeleteDocumentRequest(index_name="multi-idx", document_id="d1"),
-            ctx,
-        )
-        docs = svc.ListDocuments(data_pb2.ListDocumentsRequest(index_name="multi-idx"), ctx)
-        assert len(docs.documents) == 1
-        assert docs.documents[0].document_id == "d2"
+# ===========================================================================
+# Index metadata (both backends)
+# ===========================================================================
+
+
+def _make_index(name: str = "idx-a", owner: str = "team-a") -> Index:
+    return Index(name=name, config=IndexConfig(name=name), owner=owner)
+
+
+class TestIndexMetadata:
+    def test_create_and_get(self, store):
+        idx = _make_index("alpha")
+        store.create_index(idx)
+        got = store.get_index("alpha")
+        assert got is not None
+        assert got.name == "alpha"
+        assert got.owner == "team-a"
+        assert got.config.embedding_model == "text-embedding-3-small"
+
+    def test_get_missing_returns_none(self, store):
+        assert store.get_index("nope") is None
+
+    def test_list_returns_created(self, store):
+        store.create_index(_make_index("a"))
+        store.create_index(_make_index("b"))
+        names = {i.name for i in store.list_indexes()}
+        assert {"a", "b"}.issubset(names)
+
+    def test_create_duplicate_raises(self, store):
+        store.create_index(_make_index("dup"))
+        with pytest.raises(ValueError):
+            store.create_index(_make_index("dup"))
+
+    def test_update_index_stats(self, store):
+        store.create_index(_make_index("counted"))
+        ts = datetime.utcnow()
+        store.update_index_stats("counted", document_count=7, total_chunks=42, last_ingested_at=ts)
+        got = store.get_index("counted")
+        assert got.document_count == 7
+        assert got.total_chunks == 42
+        assert got.last_ingested_at is not None
+
+    def test_delete_index_removes_metadata(self, store):
+        store.create_index(_make_index("gone"))
+        store.delete_index("gone")
+        assert store.get_index("gone") is None
+
+
+# ===========================================================================
+# Document metadata (both backends)
+# ===========================================================================
+
+
+def _make_doc(index_name: str, doc_id: str = "doc-1") -> DocumentMetadata:
+    return DocumentMetadata(
+        document_id=doc_id,
+        index_name=index_name,
+        filename=f"{doc_id}.txt",
+        chunk_count=3,
+    )
+
+
+class TestDocumentMetadata:
+    def test_put_and_get(self, store):
+        store.create_index(_make_index("dx"))
+        store.put_document(_make_doc("dx", "doc-1"))
+        got = store.get_document("dx", "doc-1")
+        assert got is not None
+        assert got.filename == "doc-1.txt"
+        assert got.chunk_count == 3
+
+    def test_get_missing_returns_none(self, store):
+        assert store.get_document("no-such-idx", "no-such-doc") is None
+
+    def test_list_documents(self, store):
+        store.create_index(_make_index("dx"))
+        store.put_document(_make_doc("dx", "a"))
+        store.put_document(_make_doc("dx", "b"))
+        store.put_document(_make_doc("dx", "c"))
+        ids = {d.document_id for d in store.list_documents("dx")}
+        assert ids == {"a", "b", "c"}
+
+    def test_delete_by_document_removes_metadata(self, store):
+        store.create_index(_make_index("dx"))
+        store.put_document(_make_doc("dx", "d1"))
+        chunks = _make_chunks(2)
+        store.insert("dx", "d1", chunks, [[1.0, 0.0]] * 2, {})
+        store.delete_by_document("dx", "d1")
+        assert store.get_document("dx", "d1") is None
+
+    def test_delete_index_cascades_documents(self, store):
+        store.create_index(_make_index("dx"))
+        store.put_document(_make_doc("dx", "d1"))
+        store.put_document(_make_doc("dx", "d2"))
+        store.delete_index("dx")
+        assert store.list_documents("dx") == []
+        assert store.get_index("dx") is None
+
+
+# ===========================================================================
+# Durable job queue (both backends)
+# ===========================================================================
+
+
+def _make_payload(content: bytes = b"hello") -> JobPayload:
+    return JobPayload(
+        filename="doc.txt",
+        content=content,
+        caller_metadata={"source": "test"},
+    )
+
+
+class TestJobQueue:
+    def test_enqueue_and_get(self, store):
+        store.create_index(_make_index("jq"))
+        job = IngestJob(job_id="j1", status="queued")
+        store.enqueue_job(job, "jq", _make_payload())
+        got = store.get_job("j1")
+        assert got is not None
+        assert got.status == "queued"
+
+    def test_claim_returns_payload_and_marks_processing(self, store):
+        store.create_index(_make_index("jq"))
+        store.enqueue_job(IngestJob(job_id="j1", status="queued"), "jq", _make_payload(b"hi"))
+        claimed = store.claim_next_job(worker_id="w1")
+        assert claimed is not None
+        assert claimed.job.job_id == "j1"
+        assert claimed.job.status == "processing"
+        assert claimed.index_name == "jq"
+        assert claimed.payload.filename == "doc.txt"
+        assert claimed.payload.content == b"hi"
+        assert claimed.attempt_count == 1
+        assert store.get_job("j1").status == "processing"
+
+    def test_claim_is_fifo(self, store):
+        store.create_index(_make_index("jq"))
+        for i in range(3):
+            store.enqueue_job(IngestJob(job_id=f"j{i}", status="queued"), "jq", _make_payload())
+            time.sleep(0.005)  # ensure distinct created_at
+        c1 = store.claim_next_job("w")
+        c2 = store.claim_next_job("w")
+        c3 = store.claim_next_job("w")
+        assert [c1.job.job_id, c2.job.job_id, c3.job.job_id] == ["j0", "j1", "j2"]
+
+    def test_empty_queue_returns_none(self, store):
+        assert store.claim_next_job("w") is None
+
+    def test_update_terminal_status_clears_claim(self, store):
+        store.create_index(_make_index("jq"))
+        store.enqueue_job(IngestJob(job_id="j1", status="queued"), "jq", _make_payload())
+        store.claim_next_job("w")
+        store.update_job("j1", status="completed", document_id="d1", progress=1.0)
+        # Reaper should NOT re-queue a completed job.
+        released = store.release_stale_claims(timedelta(seconds=0))
+        assert released == 0
+        assert store.get_job("j1").status == "completed"
+
+    def test_update_partial_fields(self, store):
+        store.create_index(_make_index("jq"))
+        store.enqueue_job(IngestJob(job_id="j1", status="queued"), "jq", _make_payload())
+        store.update_job("j1", progress=0.5)
+        job = store.get_job("j1")
+        assert job.progress == 0.5
+        assert job.status == "queued"
+
+
+# ===========================================================================
+# Durable queue concurrency — pgvector only (SKIP LOCKED)
+# ===========================================================================
+
+
+class TestJobQueueConcurrency:
+    """Proves two concurrent PgvectorStore workers never claim the same row."""
+
+    def test_two_workers_never_claim_same_job(self, pg_store):
+        if not _pgvector_available:
+            pytest.skip(_PGVECTOR_SKIP_REASON)
+        from services.data.pgvector_store import PgvectorStore
+
+        # Enqueue 20 jobs through one connection.
+        pg_store.create_index(_make_index("race"))
+        for i in range(20):
+            pg_store.enqueue_job(
+                IngestJob(job_id=f"r{i}", status="queued"), "race", _make_payload()
+            )
+
+        # Spin two independent stores — separate DB connections.
+        s1 = PgvectorStore(connection_string=TEST_DB)
+        s2 = PgvectorStore(connection_string=TEST_DB)
+        claimed_by_1: list = []
+        claimed_by_2: list = []
+
+        def drain(store, out):
+            while True:
+                c = store.claim_next_job(worker_id="wX")
+                if c is None:
+                    return
+                out.append(c.job.job_id)
+
+        try:
+            t1 = threading.Thread(target=drain, args=(s1, claimed_by_1))
+            t2 = threading.Thread(target=drain, args=(s2, claimed_by_2))
+            t1.start()
+            t2.start()
+            t1.join(timeout=10)
+            t2.join(timeout=10)
+        finally:
+            s1.conn.close()
+            s2.conn.close()
+
+        all_claimed = claimed_by_1 + claimed_by_2
+        missing = {f"r{i}" for i in range(20)} - set(all_claimed)
+        assert len(all_claimed) == 20, f"missing jobs: {missing}"
+        assert len(set(all_claimed)) == 20, "a job was claimed by both workers"
+        # Both workers should have claimed at least one (probabilistic but
+        # overwhelmingly likely with 20 jobs).
+        assert claimed_by_1 and claimed_by_2
+
+    def test_reaper_requeues_stale_processing(self, pg_store):
+        if not _pgvector_available:
+            pytest.skip(_PGVECTOR_SKIP_REASON)
+        pg_store.create_index(_make_index("reap"))
+        pg_store.enqueue_job(IngestJob(job_id="rj1", status="queued"), "reap", _make_payload())
+        claimed = pg_store.claim_next_job("w1")
+        assert claimed is not None
+        # Immediately mark as stale by using a zero threshold.
+        released = pg_store.release_stale_claims(timedelta(seconds=0))
+        assert released == 1
+        # Should be re-claimable.
+        again = pg_store.claim_next_job("w2")
+        assert again is not None
+        assert again.job.job_id == "rj1"
+        assert again.attempt_count == 2
+
+
+# ===========================================================================
+# Durability — pgvector only (new connection sees prior writes)
+# ===========================================================================
+
+
+def test_pgvector_survives_new_connection():
+    if not _pgvector_available:
+        pytest.skip(_PGVECTOR_SKIP_REASON)
+    from services.data.pgvector_store import PgvectorStore
+
+    first = PgvectorStore(connection_string=TEST_DB)
+    try:
+        first.create_index(_make_index("durable"))
+        first.put_document(_make_doc("durable", "d1"))
+        first.enqueue_job(IngestJob(job_id="dj1", status="queued"), "durable", _make_payload())
+    finally:
+        first.conn.close()
+
+    second = PgvectorStore(connection_string=TEST_DB)
+    try:
+        assert second.get_index("durable") is not None
+        assert second.get_document("durable", "d1") is not None
+        assert second.get_job("dj1") is not None
+    finally:
+        second.delete_index("durable")
+        second.conn.close()

@@ -114,6 +114,30 @@ class IngestJob:
 
 
 @dataclass
+class JobPayload:
+    """Everything the worker needs to execute an ingest job.
+
+    Persisted on the job row so any worker (including a fresh process) can
+    claim and run the job without relying on submitter-side memory.
+    """
+
+    filename: str
+    content: bytes
+    caller_metadata: Dict[str, str] = field(default_factory=dict)
+    requested_document_id: Optional[str] = None
+
+
+@dataclass
+class ClaimedJob:
+    """A job atomically transitioned from queued -> processing by claim_next_job."""
+
+    job: IngestJob
+    index_name: str
+    payload: JobPayload
+    attempt_count: int
+
+
+@dataclass
 class IngestedDocument:
     """Result of a successful document ingestion (Listing 5.13 return type)."""
 

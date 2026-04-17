@@ -56,3 +56,38 @@ CREATE TABLE IF NOT EXISTS documents (
     ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (index_name, document_id)
 );
+
+-- Durable ingestion job queue.
+-- Payload columns (filename, content, caller_metadata, requested_document_id)
+-- let any worker claim and fully execute a job without relying on submitter-
+-- side state. claimed_by/claimed_at/attempt_count power the SELECT ... FOR
+-- UPDATE SKIP LOCKED claim pattern and the stale-claim reaper.
+CREATE TABLE IF NOT EXISTS ingest_jobs (
+    job_id VARCHAR(255) PRIMARY KEY,
+    index_name VARCHAR(255) NOT NULL,
+    status VARCHAR(32) NOT NULL,
+    document_id VARCHAR(255),
+    progress REAL DEFAULT 0.0,
+    error TEXT,
+    filename VARCHAR(1024) NOT NULL,
+    content BYTEA NOT NULL,
+    caller_metadata JSONB DEFAULT '{}',
+    requested_document_id VARCHAR(255),
+    claimed_by VARCHAR(255),
+    claimed_at TIMESTAMP,
+    attempt_count INT DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_ingest_jobs_index ON ingest_jobs(index_name);
+
+-- Hot path: scan queued jobs FIFO. Partial index keeps it small.
+CREATE INDEX IF NOT EXISTS idx_ingest_jobs_queued
+    ON ingest_jobs(created_at)
+    WHERE status = 'queued';
+
+-- Reaper path: find processing jobs whose claimed_at is too old.
+CREATE INDEX IF NOT EXISTS idx_ingest_jobs_processing
+    ON ingest_jobs(claimed_at)
+    WHERE status = 'processing';

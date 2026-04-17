@@ -14,11 +14,12 @@ import importlib
 import importlib.util
 import logging
 import os
+import socket
 import tempfile
+import threading
 import uuid
-from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
-from typing import Dict, Optional
+from datetime import datetime, timedelta
+from typing import List, Optional
 
 import grpc
 
@@ -26,10 +27,12 @@ from proto import data_pb2, data_pb2_grpc
 from services.data.chunking import ChunkingStrategy
 from services.data.embedding import EmbeddingGenerator
 from services.data.models import (
+    ClaimedJob,
     DocumentMetadata,
     Index,
     IndexConfig,
     IngestJob,
+    JobPayload,
 )
 from services.data.parsers import DocumentParser
 from services.data.pipeline import IngestionPipeline
@@ -47,6 +50,7 @@ class DataService(data_pb2_grpc.DataServiceServicer, BaseServicer):
         self,
         vector_store: Optional[VectorStore] = None,
         embed_fn=None,
+        worker_count: Optional[int] = None,
     ):
         self._vector_store = vector_store or create_vector_store()
 
@@ -67,11 +71,41 @@ class DataService(data_pb2_grpc.DataServiceServicer, BaseServicer):
             vector_store=self._vector_store,
         )
 
-        self._indexes: Dict[str, Index] = {}
-        self._documents: Dict[str, Dict[str, DocumentMetadata]] = {}
-        self._jobs: Dict[str, IngestJob] = {}
-        self._executor = ThreadPoolExecutor(max_workers=4)
         self._plugin_dir = tempfile.mkdtemp(prefix="data_plugins_")
+
+        # Durable-queue worker pool. State lives in the vector store; workers
+        # claim via SELECT ... FOR UPDATE SKIP LOCKED (pgvector) or a thread-
+        # safe deque (in-memory). Same semantics either way.
+        self._worker_id = f"{socket.gethostname()}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+        self._worker_count = (
+            worker_count if worker_count is not None else int(os.getenv("DATA_WORKER_COUNT", "4"))
+        )
+        self._poll_interval = float(os.getenv("DATA_WORKER_POLL_SECONDS", "0.5"))
+        self._stale_after = timedelta(minutes=int(os.getenv("DATA_STALE_CLAIM_MINUTES", "5")))
+        self._max_attempts = int(os.getenv("DATA_MAX_JOB_ATTEMPTS", "3"))
+        self._shutdown = threading.Event()
+        self._workers: List[threading.Thread] = []
+
+        if self._worker_count > 0:
+            # Reclaim anything the previous process left hanging before any
+            # new claims start.
+            self._vector_store.release_stale_claims(self._stale_after)
+            for i in range(self._worker_count):
+                t = threading.Thread(
+                    target=self._worker_loop,
+                    name=f"data-worker-{i}",
+                    daemon=True,
+                )
+                t.start()
+                self._workers.append(t)
+
+    def close(self, timeout: float = 30.0) -> None:
+        """Stop the worker pool. Safe to call multiple times."""
+        if self._shutdown.is_set():
+            return
+        self._shutdown.set()
+        for t in self._workers:
+            t.join(timeout=timeout)
 
     def add_to_server(self, server: grpc.Server):
         data_pb2_grpc.add_DataServiceServicer_to_server(self, server)
@@ -90,14 +124,13 @@ class DataService(data_pb2_grpc.DataServiceServicer, BaseServicer):
                 chunk_overlap=cfg.chunk_overlap or 50,
                 metadata_schema=dict(cfg.metadata_schema) if cfg.metadata_schema else None,
             )
-            if config.name in self._indexes:
-                context.set_code(grpc.StatusCode.ALREADY_EXISTS)
-                context.set_details(f"Index '{config.name}' already exists")
-                return data_pb2.IndexResponse()
-
             index = Index(name=config.name, config=config, owner=request.owner)
-            self._indexes[config.name] = index
-            self._documents[config.name] = {}
+            try:
+                self._vector_store.create_index(index)
+            except ValueError as e:
+                context.set_code(grpc.StatusCode.ALREADY_EXISTS)
+                context.set_details(str(e))
+                return data_pb2.IndexResponse()
             return self._index_to_proto(index)
         except Exception as e:
             context.set_code(grpc.StatusCode.INTERNAL)
@@ -105,7 +138,7 @@ class DataService(data_pb2_grpc.DataServiceServicer, BaseServicer):
             return data_pb2.IndexResponse()
 
     def GetIndex(self, request, context):
-        index = self._indexes.get(request.index_name)
+        index = self._vector_store.get_index(request.index_name)
         if index is None:
             context.set_code(grpc.StatusCode.NOT_FOUND)
             context.set_details(f"Index '{request.index_name}' not found")
@@ -113,18 +146,17 @@ class DataService(data_pb2_grpc.DataServiceServicer, BaseServicer):
         return self._index_to_proto(index)
 
     def ListIndexes(self, request, context):
-        protos = [self._index_to_proto(idx) for idx in self._indexes.values()]
+        protos = [self._index_to_proto(idx) for idx in self._vector_store.list_indexes()]
         return data_pb2.ListIndexesResponse(indexes=protos)
 
     def DeleteIndex(self, request, context):
         try:
-            index = self._indexes.pop(request.index_name, None)
+            index = self._vector_store.get_index(request.index_name)
             if index is None:
                 context.set_code(grpc.StatusCode.NOT_FOUND)
                 context.set_details(f"Index '{request.index_name}' not found")
                 return data_pb2.DeleteIndexResponse(success=False)
             deleted = self._vector_store.delete_index(request.index_name)
-            self._documents.pop(request.index_name, None)
             return data_pb2.DeleteIndexResponse(success=True, chunks_deleted=deleted)
         except Exception as e:
             context.set_code(grpc.StatusCode.INTERNAL)
@@ -134,83 +166,116 @@ class DataService(data_pb2_grpc.DataServiceServicer, BaseServicer):
     # ==================== Ingestion (Listing 5.15) ====================
 
     def IngestDocument(self, request, context):
-        index = self._indexes.get(request.index_name)
+        index = self._vector_store.get_index(request.index_name)
         if index is None:
             context.set_code(grpc.StatusCode.NOT_FOUND)
             context.set_details(f"Index '{request.index_name}' not found")
             return data_pb2.IngestJobResponse()
 
-        job_id = str(uuid.uuid4())
-        job = IngestJob(job_id=job_id, status="queued")
-        self._jobs[job_id] = job
-
-        self._executor.submit(
-            self._run_ingest,
-            job_id,
-            index,
-            request.filename,
-            request.content,
-            dict(request.metadata),
-            request.document_id or None,
+        job = IngestJob(job_id=str(uuid.uuid4()), status="queued")
+        payload = JobPayload(
+            filename=request.filename,
+            content=request.content,
+            caller_metadata=dict(request.metadata),
+            requested_document_id=request.document_id or None,
         )
+        self._vector_store.enqueue_job(job, request.index_name, payload)
 
+        # Best-effort: if workers are running in this process, poke them so a
+        # newly-enqueued job is claimed without waiting for the poll tick.
+        # (Tests with workers disabled call _process_claimed_job manually.)
         return self._job_to_proto(job)
 
     def GetIngestJob(self, request, context):
-        job = self._jobs.get(request.job_id)
+        job = self._vector_store.get_job(request.job_id)
         if job is None:
             context.set_code(grpc.StatusCode.NOT_FOUND)
             context.set_details(f"Job '{request.job_id}' not found")
             return data_pb2.IngestJobResponse()
         return self._job_to_proto(job)
 
-    def _run_ingest(self, job_id, index, filename, content, metadata, document_id):
-        job = self._jobs[job_id]
-        try:
-            job.status = "processing"
-            job.progress = 0.1
-            result = self._pipeline.ingest_document(
-                index=index,
-                filename=filename,
-                file_bytes=content,
-                metadata=metadata,
-                document_id=document_id,
+    def _worker_loop(self):
+        """Claim jobs from the store, process them, retry via reaper on failure."""
+        while not self._shutdown.is_set():
+            try:
+                claimed = self._vector_store.claim_next_job(self._worker_id)
+            except Exception:
+                logger.exception("claim_next_job failed; backing off")
+                self._shutdown.wait(self._poll_interval)
+                continue
+            if claimed is None:
+                self._shutdown.wait(self._poll_interval)
+                continue
+            self._handle_claimed_job(claimed)
+
+    def _handle_claimed_job(self, claimed: ClaimedJob) -> None:
+        if claimed.attempt_count > self._max_attempts:
+            self._vector_store.update_job(
+                claimed.job.job_id,
+                status="failed",
+                error=f"Exceeded {self._max_attempts} attempts",
             )
-            job.status = "completed"
-            job.document_id = result.document_id
-            job.progress = 1.0
+            return
+        try:
+            self._process_claimed_job(claimed)
+        except Exception as e:
+            logger.exception("Worker crashed on job %s", claimed.job.job_id)
+            self._vector_store.update_job(claimed.job.job_id, status="failed", error=str(e))
 
-            index.document_count += 1
-            index.total_chunks += result.chunk_count
-            index.last_ingested_at = datetime.utcnow()
+    def _process_claimed_job(self, claimed: ClaimedJob) -> None:
+        index = self._vector_store.get_index(claimed.index_name)
+        if index is None:
+            self._vector_store.update_job(
+                claimed.job.job_id,
+                status="failed",
+                error=f"Index '{claimed.index_name}' no longer exists",
+            )
+            return
 
-            doc_meta = DocumentMetadata(
+        self._vector_store.update_job(claimed.job.job_id, progress=0.1)
+
+        result = self._pipeline.ingest_document(
+            index=index,
+            filename=claimed.payload.filename,
+            file_bytes=claimed.payload.content,
+            metadata=claimed.payload.caller_metadata,
+            document_id=claimed.payload.requested_document_id,
+        )
+
+        self._vector_store.update_index_stats(
+            name=index.name,
+            document_count=index.document_count + 1,
+            total_chunks=index.total_chunks + result.chunk_count,
+            last_ingested_at=datetime.utcnow(),
+        )
+
+        self._vector_store.put_document(
+            DocumentMetadata(
                 document_id=result.document_id,
                 index_name=index.name,
-                filename=filename,
+                filename=claimed.payload.filename,
                 chunk_count=result.chunk_count,
-                word_count=len(content.split()) if isinstance(content, str) else None,
-                custom_metadata=metadata if metadata else None,
+                word_count=None,
+                custom_metadata=claimed.payload.caller_metadata or None,
             )
-            if index.name not in self._documents:
-                self._documents[index.name] = {}
-            self._documents[index.name][result.document_id] = doc_meta
+        )
 
-        except Exception as e:
-            job.status = "failed"
-            job.error = str(e)
-            logger.exception("Ingestion failed for job %s", job_id)
+        self._vector_store.update_job(
+            claimed.job.job_id,
+            status="completed",
+            document_id=result.document_id,
+            progress=1.0,
+        )
 
     # ==================== Document Management (Listing 5.14) ====================
 
     def ListDocuments(self, request, context):
-        docs = self._documents.get(request.index_name, {})
-        protos = [self._doc_meta_to_proto(d) for d in docs.values()]
+        docs = self._vector_store.list_documents(request.index_name)
+        protos = [self._doc_meta_to_proto(d) for d in docs]
         return data_pb2.ListDocumentsResponse(documents=protos)
 
     def GetDocument(self, request, context):
-        docs = self._documents.get(request.index_name, {})
-        doc = docs.get(request.document_id)
+        doc = self._vector_store.get_document(request.index_name, request.document_id)
         if doc is None:
             context.set_code(grpc.StatusCode.NOT_FOUND)
             context.set_details("Document not found")
@@ -220,8 +285,6 @@ class DataService(data_pb2_grpc.DataServiceServicer, BaseServicer):
     def DeleteDocument(self, request, context):
         try:
             deleted = self._vector_store.delete_by_document(request.index_name, request.document_id)
-            docs = self._documents.get(request.index_name, {})
-            docs.pop(request.document_id, None)
             return data_pb2.DeleteDocumentResponse(success=True, chunks_deleted=deleted)
         except Exception as e:
             context.set_code(grpc.StatusCode.INTERNAL)
@@ -231,7 +294,7 @@ class DataService(data_pb2_grpc.DataServiceServicer, BaseServicer):
     # ==================== Search (Listings 5.20, 5.23) ====================
 
     def Search(self, request, context):
-        index = self._indexes.get(request.index_name)
+        index = self._vector_store.get_index(request.index_name)
         if index is None:
             context.set_code(grpc.StatusCode.NOT_FOUND)
             context.set_details(f"Index '{request.index_name}' not found")
@@ -251,7 +314,7 @@ class DataService(data_pb2_grpc.DataServiceServicer, BaseServicer):
             return data_pb2.SearchResponse()
 
     def HybridSearch(self, request, context):
-        index = self._indexes.get(request.index_name)
+        index = self._vector_store.get_index(request.index_name)
         if index is None:
             context.set_code(grpc.StatusCode.NOT_FOUND)
             context.set_details(f"Index '{request.index_name}' not found")
