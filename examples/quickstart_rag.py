@@ -7,7 +7,13 @@ Demonstrates the full RAG pipeline through the SDK:
   3. Search for relevant context via semantic search
   4. Generate an answer using the Model Service with retrieved context
 
-Requires OPENAI_API_KEY (used for both embeddings and chat).
+**Requires:**
+  - OPENAI_API_KEY in .env (used for both embeddings and chat)
+  - PostgreSQL + pgvector locally (see README "Optional: PostgreSQL storage")
+
+The script runs against ``VECTOR_STORE=pgvector`` so indexes, documents, and
+ingest-job records persist to Postgres — re-running the script cleans up any
+prior ``globotech`` index first so it's safely idempotent.
 
 Book: "Designing AI Systems" (https://www.manning.com/books/designing-ai-systems)
   - Chapter 5: Data Service (ingestion, search, RAG)
@@ -25,9 +31,15 @@ os.environ.setdefault("GRPC_ENABLE_FORK_SUPPORT", "0")
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# Default to pgvector persistence so every run writes to the same Postgres
+# database. Override in .env if you want in-memory for a quick smoke test.
+os.environ.setdefault("VECTOR_STORE", "pgvector")
+os.environ.setdefault("DB_CONNECTION_STRING", "postgresql://localhost/genai_platform")
+
 from genai_platform import GenAIPlatform
 from services.data.models import IndexConfig
 from services.data.service import DataService
+from services.data.store import create_vector_store
 from services.gateway.registry import ServiceRegistry
 from services.gateway.servers import create_grpc_server as create_gateway_grpc
 from services.gateway.servers import create_http_server
@@ -73,8 +85,26 @@ using form GT-PET-2026. The Zurich and Singapore offices do not permit pets.
 """.strip()
 
 
+def _openai_embed_fn():
+    """Return an embed_fn(texts, model) that calls OpenAI directly.
+
+    The Data Service's default `embed_fn` is a placeholder that returns zero
+    vectors, which silently breaks semantic retrieval. Wire a real one here
+    against the OpenAI SDK so ingestion produces meaningful embeddings.
+    """
+    from openai import OpenAI
+
+    client = OpenAI()
+
+    def _embed(texts, model):
+        resp = client.embeddings.create(model=model, input=list(texts))
+        return [d.embedding for d in resp.data]
+
+    return _embed
+
+
 def _start_servers():
-    """Start Data Service, Model Service, and Gateway. Returns server objects for cleanup."""
+    """Start Data Service, Model Service, and Gateway. Returns (servicer, servers)."""
     from http.server import HTTPServer
 
     HTTPServer.allow_reuse_address = True
@@ -83,9 +113,13 @@ def _start_servers():
     project_root = Path(__file__).resolve().parents[1]
     load_env_file(project_root / ".env")
 
-    # Data Service
+    # Data Service — explicit backing store + real embedding fn so the
+    # pipeline uses persistent pgvector storage and OpenAI embeddings.
     data_port = get_service_port("data")
-    data_servicer = DataService()
+    data_servicer = DataService(
+        vector_store=create_vector_store(),
+        embed_fn=_openai_embed_fn(),
+    )
     data_server = create_grpc_server(servicer=data_servicer, port=data_port, service_name="data")
     data_server.start()
 
@@ -115,11 +149,12 @@ def _start_servers():
     http_thread = threading.Thread(target=http_server.serve_forever, daemon=True)
     http_thread.start()
 
-    return data_server, model_server, gateway_server, http_server
+    return data_servicer, data_server, model_server, gateway_server, http_server
 
 
-def _stop_servers(data_server, model_server, gateway_server, http_server):
-    """Gracefully stop all servers, freeing ports."""
+def _stop_servers(data_servicer, data_server, model_server, gateway_server, http_server):
+    """Gracefully stop all servers and drain the worker pool, freeing ports."""
+    data_servicer.close(timeout=5)
     http_server.shutdown()
     gateway_server.stop(grace=0)
     model_server.stop(grace=0)
@@ -146,15 +181,23 @@ def main():
     print("=" * 60)
 
     print("\nStarting services...")
-    data_server, model_server, gateway_server, http_server = _start_servers()
+    data_servicer, data_server, model_server, gateway_server, http_server = _start_servers()
     time.sleep(1)
-    print("Services ready!\n")
+    print(f"Services ready (vector store: {os.environ['VECTOR_STORE']})!\n")
 
     handbook_path = None
     try:
         platform = GenAIPlatform()
 
         # --- 1. Create index ---
+        # With pgvector the index persists across runs; drop any prior one so
+        # the script is idempotent.
+        try:
+            platform.data.delete_index("globotech")
+            print("[0] Removed prior 'globotech' index (idempotent setup).")
+        except Exception:
+            pass
+
         print("[1] Creating index 'globotech'...")
         config = IndexConfig(
             name="globotech",
@@ -237,7 +280,7 @@ def main():
         if handbook_path and handbook_path.exists():
             handbook_path.unlink(missing_ok=True)
             handbook_path.parent.rmdir()
-        _stop_servers(data_server, model_server, gateway_server, http_server)
+        _stop_servers(data_servicer, data_server, model_server, gateway_server, http_server)
         time.sleep(0.5)
 
 
