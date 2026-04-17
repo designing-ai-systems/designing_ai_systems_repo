@@ -1,9 +1,29 @@
 """Comprehensive Data Service storage tests for both InMemory and PgvectorStore.
 
 Runs the same test suite against both backends using a parameterized fixture.
-PgvectorStore tests auto-skip when PostgreSQL with pgvector is unavailable.
+PgvectorStore tests run only when PostgreSQL is reachable **and** the pgvector
+extension is available (``CREATE EXTENSION vector`` succeeds). Session-style
+Postgres tests do not require pgvector; these tests do, because PgvectorStore
+uses the ``vector`` type.
 
-Set DB_TEST_URL to override the connection string (used in CI).
+**Why tests might skip locally**
+
+- **Connection**: Default URL is ``postgresql://localhost/genai_platform_test``
+  (current OS user, no password). If auth differs, set ``DB_TEST_URL`` to match
+  your install (same as ``tests/test_postgres_storage.py``).
+- **Database missing**: Same auto-create logic as session tests: we try to
+  ``CREATE DATABASE genai_platform_test`` via the ``postgres`` database when
+  the target DB does not exist.
+- **pgvector not installed**: Stock PostgreSQL (Homebrew, Postgres.app, etc.)
+  does not include pgvector. Install the extension for your Postgres version
+  (e.g. ``brew install pgvector`` on macOS), then in the test database run
+  ``CREATE EXTENSION vector;`` once as a superuser, or rely on this module’s
+  attempt when permissions allow.
+
+**Run with your local server** — export DB_TEST_URL if needed, e.g.:
+
+export DB_TEST_URL="postgresql://USER:PASSWORD@localhost:5432/genai_platform_test"
+pytest tests/test_data_comprehensive.py -v
 """
 
 import os
@@ -19,15 +39,21 @@ _DEFAULT_TEST_DB = "postgresql://localhost/genai_platform_test"
 TEST_DB = os.environ.get("DB_TEST_URL", _DEFAULT_TEST_DB)
 
 _pgvector_available = False
+_PGVECTOR_SKIP_REASON = (
+    "PostgreSQL + pgvector tests skipped: set DB_TEST_URL if needed, ensure "
+    "database exists or can be created, and install pgvector "
+    "(CREATE EXTENSION vector must succeed). See module docstring."
+)
 
 try:
     import psycopg2
     from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 
+    _pg_connected = False
     try:
         _conn = psycopg2.connect(TEST_DB)
         _conn.close()
-        _pgvector_available = True
+        _pg_connected = True
     except psycopg2.OperationalError:
         try:
             _base_url = TEST_DB.rsplit("/", 1)[0] + "/postgres"
@@ -36,21 +62,34 @@ try:
             with _conn.cursor() as cur:
                 cur.execute("CREATE DATABASE genai_platform_test")
             _conn.close()
-            _pgvector_available = True
-        except Exception:
-            pass
+            _pg_connected = True
+        except Exception as e:
+            _PGVECTOR_SKIP_REASON = (
+                f"PostgreSQL not reachable or DB could not be created ({TEST_DB!r}): {e}. "
+                "Set DB_TEST_URL to your connection string (see test_postgres_storage.py)."
+            )
 
-    if _pgvector_available:
+    if _pg_connected:
         _conn = psycopg2.connect(TEST_DB)
         _conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
         with _conn.cursor() as cur:
             try:
                 cur.execute("CREATE EXTENSION IF NOT EXISTS vector")
-            except Exception:
+            except Exception as e:
                 _pgvector_available = False
+                _PGVECTOR_SKIP_REASON = (
+                    "PostgreSQL is reachable but pgvector is not available "
+                    f"(CREATE EXTENSION vector failed: {e}). "
+                    "Install pgvector for your Postgres version and ensure the role "
+                    "can create extensions, or run CREATE EXTENSION vector once as superuser."
+                )
+            else:
+                _pgvector_available = True
         _conn.close()
 except ImportError:
-    pass
+    _PGVECTOR_SKIP_REASON = (
+        "psycopg2 not installed; install optional dependency: pip install psycopg2-binary"
+    )
 
 
 def _make_chunks(n: int, prefix: str = "chunk") -> list[Chunk]:
@@ -77,7 +116,7 @@ def store(request):
         yield InMemoryVectorStore()
     else:
         if not _pgvector_available:
-            pytest.skip("PostgreSQL with pgvector unavailable")
+            pytest.skip(_PGVECTOR_SKIP_REASON)
         from services.data.pgvector_store import PgvectorStore
 
         s = PgvectorStore(connection_string=TEST_DB)
@@ -92,7 +131,7 @@ def store(request):
 def pg_store():
     """PgvectorStore-only fixture for keyword search tests."""
     if not _pgvector_available:
-        pytest.skip("PostgreSQL with pgvector unavailable")
+        pytest.skip(_PGVECTOR_SKIP_REASON)
     from services.data.pgvector_store import PgvectorStore
 
     s = PgvectorStore(connection_string=TEST_DB)
