@@ -44,30 +44,29 @@ ruff format --check .
 
 ### Optional: PostgreSQL storage
 
-By default the Session Service uses in-memory storage. To persist sessions
-across restarts, use PostgreSQL.
+By default the Session Service uses in-memory storage. To persist sessions and
+enable the Data Service's vector search, use PostgreSQL with the `pgvector`
+extension. Both services share one database (separate tables) and one server.
 
 #### macOS (Homebrew)
 
 ```bash
-# Install PostgreSQL 16
-brew install postgresql@16
+# Install PostgreSQL 17 and pgvector (required for Data Service)
+brew install postgresql@17 pgvector
 
-# Start the server (runs in the background, auto-starts on login)
-brew services start postgresql@16
+# Start the server (auto-starts on login)
+brew services start postgresql@17
 
-# Create the database
+# Create the database and apply both schemas
 createdb genai_platform
-
-# Apply the schema
 psql genai_platform < services/sessions/schema.sql
+psql genai_platform < services/data/schema.sql
 ```
 
-> **Tip:** If `psql` / `createdb` are not on your PATH after install, add the
-> Homebrew PostgreSQL bin directory:
+> **Tip:** If `psql` / `createdb` are not on your PATH, link PostgreSQL 17
+> (it is keg-only by default):
 > ```bash
-> echo 'export PATH="/opt/homebrew/opt/postgresql@16/bin:$PATH"' >> ~/.zshrc
-> source ~/.zshrc
+> brew link --force postgresql@17
 > ```
 
 #### Install the Python driver and configure
@@ -75,29 +74,16 @@ psql genai_platform < services/sessions/schema.sql
 ```bash
 pip install -e ".[postgres]"
 
-# Set env vars before starting the session service:
+# Set env vars before starting the services:
 export SESSION_STORAGE=postgres
-export DB_CONNECTION_STRING="postgresql://localhost/genai_platform"
-```
-
-The session service will now read and write to PostgreSQL.
-
-#### Data Service (pgvector)
-
-The Data Service uses the same PostgreSQL instance but requires the `pgvector`
-extension for vector similarity search.
-
-```bash
-# Install pgvector (macOS)
-brew install pgvector
-
-# Apply the Data Service schema (includes pgvector extension setup)
-psql genai_platform < services/data/schema.sql
-
-# Configure
 export VECTOR_STORE=pgvector
 export DB_CONNECTION_STRING="postgresql://localhost/genai_platform"
 ```
+
+Both services will now read and write to PostgreSQL. Running a local
+PostgreSQL 17 with `pgvector` also enables the `test_data_comprehensive.py`
+pgvector tests to run locally (mirroring how the Session Service tests run
+against your local server).
 
 ## Quick Start
 
