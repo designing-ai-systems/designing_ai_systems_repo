@@ -70,6 +70,16 @@ class ModelServiceStub(object):
                 request_serializer=models__pb2.ListPromptsRequest.SerializeToString,
                 response_deserializer=models__pb2.ListPromptsResponse.FromString,
                 _registered_method=True)
+        self.Embed = channel.unary_unary(
+                '/models.ModelService/Embed',
+                request_serializer=models__pb2.EmbedRequest.SerializeToString,
+                response_deserializer=models__pb2.EmbedResponse.FromString,
+                _registered_method=True)
+        self.ListEmbeddingModels = channel.unary_unary(
+                '/models.ModelService/ListEmbeddingModels',
+                request_serializer=models__pb2.ListEmbeddingModelsRequest.SerializeToString,
+                response_deserializer=models__pb2.ListEmbeddingModelsResponse.FromString,
+                _registered_method=True)
         self.RegisterModel = channel.unary_unary(
                 '/models.ModelService/RegisterModel',
                 request_serializer=models__pb2.RegisterModelRequest.SerializeToString,
@@ -136,6 +146,19 @@ class ModelServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def Embed(self, request, context):
+        """Embedding
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ListEmbeddingModels(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def RegisterModel(self, request, context):
         """Custom model registry
         """
@@ -192,6 +215,16 @@ def add_ModelServiceServicer_to_server(servicer, server):
                     servicer.ListPrompts,
                     request_deserializer=models__pb2.ListPromptsRequest.FromString,
                     response_serializer=models__pb2.ListPromptsResponse.SerializeToString,
+            ),
+            'Embed': grpc.unary_unary_rpc_method_handler(
+                    servicer.Embed,
+                    request_deserializer=models__pb2.EmbedRequest.FromString,
+                    response_serializer=models__pb2.EmbedResponse.SerializeToString,
+            ),
+            'ListEmbeddingModels': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListEmbeddingModels,
+                    request_deserializer=models__pb2.ListEmbeddingModelsRequest.FromString,
+                    response_serializer=models__pb2.ListEmbeddingModelsResponse.SerializeToString,
             ),
             'RegisterModel': grpc.unary_unary_rpc_method_handler(
                     servicer.RegisterModel,
@@ -399,6 +432,60 @@ class ModelService(object):
             '/models.ModelService/ListPrompts',
             models__pb2.ListPromptsRequest.SerializeToString,
             models__pb2.ListPromptsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Embed(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/models.ModelService/Embed',
+            models__pb2.EmbedRequest.SerializeToString,
+            models__pb2.EmbedResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListEmbeddingModels(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/models.ModelService/ListEmbeddingModels',
+            models__pb2.ListEmbeddingModelsRequest.SerializeToString,
+            models__pb2.ListEmbeddingModelsResponse.FromString,
             options,
             channel_credentials,
             insecure,

@@ -25,6 +25,10 @@ service ModelService {
     rpc GetPrompt(GetPromptRequest) returns (Prompt);
     rpc ListPrompts(ListPromptsRequest) returns (ListPromptsResponse);
 
+    // Embedding
+    rpc Embed(EmbedRequest) returns (EmbedResponse);
+    rpc ListEmbeddingModels(ListEmbeddingModelsRequest) returns (ListEmbeddingModelsResponse);
+
     // Custom model registry
     rpc RegisterModel(RegisterModelRequest) returns (RegisterModelResponse);
     rpc ListRegisteredModels(ListRegisteredModelsRequest) returns (ListRegisteredModelsResponse);
@@ -217,4 +221,28 @@ message ModelStatus {
     string status = 2;
     string last_checked = 3;
     string endpoint = 4;
+}
+
+// --- Embedding types ---
+
+message EmbedRequest {
+    repeated string texts = 1;
+    string model = 2;
+}
+
+message Embedding {
+    repeated float values = 1;
+}
+
+message EmbedResponse {
+    repeated Embedding embeddings = 1;
+    string model = 2;
+    string provider = 3;
+    TokenUsage usage = 4;
+}
+
+message ListEmbeddingModelsRequest {}
+
+message ListEmbeddingModelsResponse {
+    repeated ModelInfo models = 1;
 }

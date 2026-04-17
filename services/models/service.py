@@ -23,6 +23,8 @@ from typing import Dict, Iterable, List, Optional
 import grpc
 
 from proto import models_pb2, models_pb2_grpc
+from services.models.embedding_providers.base import EmbeddingProvider
+from services.models.embedding_providers.openai_provider import OpenAIEmbeddingProvider
 from services.models.models import (
     ChatChunk,
     ChatConfig,
@@ -40,7 +42,9 @@ from services.shared.servicer_base import BaseServicer
 class ModelService(models_pb2_grpc.ModelServiceServicer, BaseServicer):
     def __init__(self):
         self._providers: Dict[str, ModelProvider] = {}
+        self._embedding_providers: Dict[str, EmbeddingProvider] = {}
         self._initialize_providers()
+        self._initialize_embedding_providers()
         self._model_registry = ModelRegistry()
         self._prompts = PromptRegistry()
 
@@ -272,6 +276,61 @@ class ModelService(models_pb2_grpc.ModelServiceServicer, BaseServicer):
         context.set_details(f"Model '{request.model}' not found")
         return models_pb2.ModelCapabilities()
 
+    # ==================== Embedding ====================
+
+    def Embed(
+        self, request: models_pb2.EmbedRequest, context
+    ) -> models_pb2.EmbedResponse:
+        model_name = request.model
+        if not model_name:
+            context.set_code(grpc.StatusCode.INVALID_ARGUMENT)
+            context.set_details("Model name is required for embedding.")
+            return models_pb2.EmbedResponse()
+
+        provider = self._resolve_embedding_provider(model_name)
+        if provider is None:
+            context.set_code(grpc.StatusCode.NOT_FOUND)
+            context.set_details(
+                f"No embedding provider found for model '{model_name}'."
+            )
+            return models_pb2.EmbedResponse()
+
+        domain_resp = provider.embed(list(request.texts), model_name)
+
+        proto_embeddings = [
+            models_pb2.Embedding(values=vec) for vec in domain_resp.embeddings
+        ]
+        usage = None
+        if domain_resp.usage:
+            usage = models_pb2.TokenUsage(
+                prompt_tokens=domain_resp.usage.prompt_tokens,
+                completion_tokens=domain_resp.usage.completion_tokens,
+                total_tokens=domain_resp.usage.total_tokens,
+            )
+        return models_pb2.EmbedResponse(
+            embeddings=proto_embeddings,
+            model=domain_resp.model,
+            provider=domain_resp.provider,
+            usage=usage,
+        )
+
+    def ListEmbeddingModels(
+        self, request, context
+    ) -> models_pb2.ListEmbeddingModelsResponse:
+        models_by_name = {}
+        for provider in self._embedding_providers.values():
+            for info in provider.get_supported_embedding_models():
+                models_by_name[info.name] = models_pb2.ModelInfo(
+                    name=info.name,
+                    provider=info.provider,
+                    capabilities=models_pb2.ModelCapabilities(
+                        context_window=info.capabilities.context_window,
+                    ),
+                )
+        return models_pb2.ListEmbeddingModelsResponse(
+            models=list(models_by_name.values())
+        )
+
     # ==================== Prompt Management ====================
 
     def RegisterPrompt(self, request, context) -> models_pb2.RegisterPromptResponse:
@@ -338,6 +397,23 @@ class ModelService(models_pb2_grpc.ModelServiceServicer, BaseServicer):
         if anthropic_key:
             self._providers["anthropic"] = AnthropicProvider(api_key=anthropic_key)
 
+    def _initialize_embedding_providers(self) -> None:
+        openai_key = os.getenv("OPENAI_API_KEY")
+        if openai_key:
+            self._embedding_providers["openai"] = OpenAIEmbeddingProvider(
+                api_key=openai_key, base_url=os.getenv("OPENAI_BASE_URL")
+            )
+        hf_models = os.getenv("HF_EMBEDDING_MODELS")
+        if hf_models:
+            from services.models.embedding_providers.huggingface_provider import (
+                HuggingFaceEmbeddingProvider,
+            )
+            model_names = [m.strip() for m in hf_models.split(",") if m.strip()]
+            if model_names:
+                self._embedding_providers["huggingface"] = (
+                    HuggingFaceEmbeddingProvider(model_names=model_names)
+                )
+
     def _resolve_provider(self, model_name: str) -> Optional[ModelProvider]:
         registered = self._model_registry.get(model_name)
         if registered:
@@ -347,6 +423,15 @@ class ModelService(models_pb2_grpc.ModelServiceServicer, BaseServicer):
             return None
         for provider in self._providers.values():
             for info in provider.get_supported_models():
+                if info.name == model_name:
+                    return provider
+        return None
+
+    def _resolve_embedding_provider(
+        self, model_name: str
+    ) -> Optional[EmbeddingProvider]:
+        for provider in self._embedding_providers.values():
+            for info in provider.get_supported_embedding_models():
                 if info.name == model_name:
                     return provider
         return None
