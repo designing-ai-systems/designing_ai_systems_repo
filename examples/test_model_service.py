@@ -13,31 +13,58 @@ Tests:
 Automatically starts all required services.
 """
 
+import os
 import sys
 import threading
 import time
+from http.server import HTTPServer
 from pathlib import Path
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from genai_platform import GenAIPlatform
-from services.gateway.main import main as start_gateway
-from services.models.main import main as start_model_service
+from services.gateway.registry import ServiceRegistry
+from services.gateway.servers import create_grpc_server as create_gateway_grpc
+from services.gateway.servers import create_http_server
+from services.models.main import load_env_file
+from services.models.service import ModelService
+from services.shared.server import create_grpc_server, get_service_port
 
 
-def start_service_in_thread(service_func, service_name):
-    """Start a service in a background thread."""
+def _start_servers():
+    """Start model service and gateway, returning server objects for cleanup."""
+    HTTPServer.allow_reuse_address = True
 
-    def run_service():
-        try:
-            service_func()
-        except KeyboardInterrupt:
-            pass
+    project_root = Path(__file__).resolve().parents[1]
+    load_env_file(project_root / ".env")
 
-    thread = threading.Thread(target=run_service, daemon=True, name=service_name)
-    thread.start()
-    return thread
+    port = get_service_port("models")
+    servicer = ModelService()
+    model_server = create_grpc_server(servicer=servicer, port=port, service_name="models")
+    model_server.start()
+
+    registry = ServiceRegistry()
+    models_addr = os.getenv("MODELS_SERVICE_ADDR", f"localhost:{port}")
+    registry.register_platform_service("models", models_addr)
+
+    grpc_port = int(os.getenv("GATEWAY_PORT", "50051"))
+    gateway_server = create_gateway_grpc(registry, grpc_port)
+    gateway_server.start()
+
+    http_port = int(os.getenv("GATEWAY_HTTP_PORT", "8080"))
+    http_server = create_http_server(registry, http_port)
+    http_thread = threading.Thread(target=http_server.serve_forever, daemon=True)
+    http_thread.start()
+
+    return model_server, gateway_server, http_server
+
+
+def _stop_servers(model_server, gateway_server, http_server):
+    """Gracefully stop all servers."""
+    http_server.shutdown()
+    gateway_server.stop(grace=0)
+    model_server.stop(grace=0)
 
 
 def test_discovery(platform: GenAIPlatform):
@@ -166,15 +193,10 @@ def main():
     print("=" * 60)
     print("\nStarting services...")
 
-    # Start services
-    start_service_in_thread(start_model_service, "ModelService")
-    time.sleep(2)
-    start_service_in_thread(start_gateway, "Gateway")
-    time.sleep(2)
-
+    model_server, gateway_server, http_server = _start_servers()
+    time.sleep(1)
     print("Services started!\n")
 
-    # Initialize platform
     platform = GenAIPlatform()
 
     try:
@@ -210,13 +232,8 @@ def main():
 
         traceback.print_exc()
 
-    print("\nPress Ctrl+C to stop services...")
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        print("\nStopping...")
-        sys.exit(0)
+    finally:
+        _stop_servers(model_server, gateway_server, http_server)
 
 
 if __name__ == "__main__":
