@@ -1,14 +1,12 @@
 """Tests for Data Service vector store (book Listings 5.16, 5.17, 5.21)."""
 
-
 from services.data.models import Chunk, SearchResult
 from services.data.store import InMemoryVectorStore, VectorStore
 
 
 def _make_chunks(n: int) -> list[Chunk]:
     return [
-        Chunk(text=f"chunk {i}", start_offset=i * 10, end_offset=(i + 1) * 10)
-        for i in range(n)
+        Chunk(text=f"chunk {i}", start_offset=i * 10, end_offset=(i + 1) * 10) for i in range(n)
     ]
 
 
@@ -97,9 +95,7 @@ class TestInMemoryVectorStoreSearch:
         c2 = _make_chunks(2)
         store.insert("idx", "doc-1", c1, [[1.0, 0.0]] * 2, {"dept": "eng"})
         store.insert("idx", "doc-2", c2, [[0.9, 0.1]] * 2, {"dept": "legal"})
-        results = store.search(
-            "idx", [1.0, 0.0], top_k=10, metadata_filters={"dept": "legal"}
-        )
+        results = store.search("idx", [1.0, 0.0], top_k=10, metadata_filters={"dept": "legal"})
         assert len(results) == 2
         assert all(r.metadata["dept"] == "legal" for r in results)
 

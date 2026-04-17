@@ -44,10 +44,7 @@ class HuggingFaceEmbeddingProvider(EmbeddingProvider):
 
     def _get_model(self, model_name: str):
         if model_name not in self._model_names:
-            raise ValueError(
-                f"Model '{model_name}' not configured. "
-                f"Available: {self._model_names}"
-            )
+            raise ValueError(f"Model '{model_name}' not configured. Available: {self._model_names}")
         if model_name not in self._models:
             self._models[model_name] = _load_sentence_transformer(model_name)
         return self._models[model_name]

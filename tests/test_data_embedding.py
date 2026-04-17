@@ -41,10 +41,7 @@ class TestEmbeddingGenerator:
             return [[1.0] * 4 for _ in texts]
 
         gen = EmbeddingGenerator(embed_fn=counting_embed)
-        chunks = [
-            Chunk(text=f"chunk{i}", start_offset=i, end_offset=i + 1)
-            for i in range(250)
-        ]
+        chunks = [Chunk(text=f"chunk{i}", start_offset=i, end_offset=i + 1) for i in range(250)]
         embeddings = gen.embed_chunks(chunks, model="m", batch_size=100)
         assert len(embeddings) == 250
         assert call_count == 3

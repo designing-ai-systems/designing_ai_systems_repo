@@ -278,9 +278,7 @@ class ModelService(models_pb2_grpc.ModelServiceServicer, BaseServicer):
 
     # ==================== Embedding ====================
 
-    def Embed(
-        self, request: models_pb2.EmbedRequest, context
-    ) -> models_pb2.EmbedResponse:
+    def Embed(self, request: models_pb2.EmbedRequest, context) -> models_pb2.EmbedResponse:
         model_name = request.model
         if not model_name:
             context.set_code(grpc.StatusCode.INVALID_ARGUMENT)
@@ -290,16 +288,12 @@ class ModelService(models_pb2_grpc.ModelServiceServicer, BaseServicer):
         provider = self._resolve_embedding_provider(model_name)
         if provider is None:
             context.set_code(grpc.StatusCode.NOT_FOUND)
-            context.set_details(
-                f"No embedding provider found for model '{model_name}'."
-            )
+            context.set_details(f"No embedding provider found for model '{model_name}'.")
             return models_pb2.EmbedResponse()
 
         domain_resp = provider.embed(list(request.texts), model_name)
 
-        proto_embeddings = [
-            models_pb2.Embedding(values=vec) for vec in domain_resp.embeddings
-        ]
+        proto_embeddings = [models_pb2.Embedding(values=vec) for vec in domain_resp.embeddings]
         usage = None
         if domain_resp.usage:
             usage = models_pb2.TokenUsage(
@@ -314,9 +308,7 @@ class ModelService(models_pb2_grpc.ModelServiceServicer, BaseServicer):
             usage=usage,
         )
 
-    def ListEmbeddingModels(
-        self, request, context
-    ) -> models_pb2.ListEmbeddingModelsResponse:
+    def ListEmbeddingModels(self, request, context) -> models_pb2.ListEmbeddingModelsResponse:
         models_by_name = {}
         for provider in self._embedding_providers.values():
             for info in provider.get_supported_embedding_models():
@@ -327,9 +319,7 @@ class ModelService(models_pb2_grpc.ModelServiceServicer, BaseServicer):
                         context_window=info.capabilities.context_window,
                     ),
                 )
-        return models_pb2.ListEmbeddingModelsResponse(
-            models=list(models_by_name.values())
-        )
+        return models_pb2.ListEmbeddingModelsResponse(models=list(models_by_name.values()))
 
     # ==================== Prompt Management ====================
 
@@ -408,10 +398,11 @@ class ModelService(models_pb2_grpc.ModelServiceServicer, BaseServicer):
             from services.models.embedding_providers.huggingface_provider import (
                 HuggingFaceEmbeddingProvider,
             )
+
             model_names = [m.strip() for m in hf_models.split(",") if m.strip()]
             if model_names:
-                self._embedding_providers["huggingface"] = (
-                    HuggingFaceEmbeddingProvider(model_names=model_names)
+                self._embedding_providers["huggingface"] = HuggingFaceEmbeddingProvider(
+                    model_names=model_names
                 )
 
     def _resolve_provider(self, model_name: str) -> Optional[ModelProvider]:
@@ -427,9 +418,7 @@ class ModelService(models_pb2_grpc.ModelServiceServicer, BaseServicer):
                     return provider
         return None
 
-    def _resolve_embedding_provider(
-        self, model_name: str
-    ) -> Optional[EmbeddingProvider]:
+    def _resolve_embedding_provider(self, model_name: str) -> Optional[EmbeddingProvider]:
         for provider in self._embedding_providers.values():
             for info in provider.get_supported_embedding_models():
                 if info.name == model_name:

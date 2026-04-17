@@ -70,27 +70,21 @@ class TestSearchOrchestrator:
     def test_search(self):
         store = InMemoryVectorStore()
         embed_gen = EmbeddingGenerator(embed_fn=_fake_embed)
-        orchestrator = SearchOrchestrator(
-            embedding_generator=embed_gen, vector_store=store
-        )
+        orchestrator = SearchOrchestrator(embedding_generator=embed_gen, vector_store=store)
         index = _make_index()
 
         chunks = [Chunk(text="hello", start_offset=0, end_offset=5)]
         embeddings = _fake_embed(["hello"], "fake-model")
         store.insert("test-idx", "doc-1", chunks, embeddings, {})
 
-        results = orchestrator.search(
-            index=index, query="hello", top_k=5
-        )
+        results = orchestrator.search(index=index, query="hello", top_k=5)
         assert len(results) >= 1
         assert results[0].text == "hello"
 
     def test_search_with_metadata_filter(self):
         store = InMemoryVectorStore()
         embed_gen = EmbeddingGenerator(embed_fn=_fake_embed)
-        orchestrator = SearchOrchestrator(
-            embedding_generator=embed_gen, vector_store=store
-        )
+        orchestrator = SearchOrchestrator(embedding_generator=embed_gen, vector_store=store)
         index = _make_index()
 
         c1 = [Chunk(text="hello", start_offset=0, end_offset=5)]
@@ -106,9 +100,7 @@ class TestSearchOrchestrator:
     def test_hybrid_search(self):
         store = InMemoryVectorStore()
         embed_gen = EmbeddingGenerator(embed_fn=_fake_embed)
-        orchestrator = SearchOrchestrator(
-            embedding_generator=embed_gen, vector_store=store
-        )
+        orchestrator = SearchOrchestrator(embedding_generator=embed_gen, vector_store=store)
         index = _make_index()
 
         chunks = [Chunk(text="hello", start_offset=0, end_offset=5)]
@@ -117,7 +109,5 @@ class TestSearchOrchestrator:
 
         # hybrid_search should not raise even if keyword_search is not supported;
         # it falls back gracefully
-        results = orchestrator.hybrid_search(
-            index=index, query="hello", top_k=5
-        )
+        results = orchestrator.hybrid_search(index=index, query="hello", top_k=5)
         assert len(results) >= 1

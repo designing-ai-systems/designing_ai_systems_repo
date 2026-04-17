@@ -45,9 +45,7 @@ class FixedSizeChunking(ChunkingStrategy):
             search_start = sum(len(w) + 1 for w in words[:i])
             start_offset = text.find(chunk_words[0], search_start) if chunk_words else 0
             end_offset = start_offset + len(chunk_text)
-            chunks.append(
-                Chunk(text=chunk_text, start_offset=start_offset, end_offset=end_offset)
-            )
+            chunks.append(Chunk(text=chunk_text, start_offset=start_offset, end_offset=end_offset))
             i += step
 
         return chunks

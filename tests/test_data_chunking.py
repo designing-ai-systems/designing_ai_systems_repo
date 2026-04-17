@@ -26,9 +26,7 @@ class TestFixedSizeChunking:
 
     def test_chunk_size_respected(self):
         strategy = FixedSizeChunking(chunk_size=3, chunk_overlap=0)
-        doc = ExtractedDocument(
-            sections=[DocumentSection(content="a b c d e f g h i")]
-        )
+        doc = ExtractedDocument(sections=[DocumentSection(content="a b c d e f g h i")])
         chunks = strategy.chunk(doc)
         for chunk in chunks:
             words = chunk.text.split()
@@ -60,9 +58,7 @@ class TestFixedSizeChunking:
 
     def test_offsets_set(self):
         strategy = FixedSizeChunking(chunk_size=5, chunk_overlap=0)
-        doc = ExtractedDocument(
-            sections=[DocumentSection(content="word " * 20)]
-        )
+        doc = ExtractedDocument(sections=[DocumentSection(content="word " * 20)])
         chunks = strategy.chunk(doc)
         for chunk in chunks:
             assert chunk.start_offset >= 0
@@ -73,9 +69,11 @@ class TestRecursiveChunking:
     def test_splits_on_double_newline(self):
         strategy = RecursiveChunking(chunk_size=4, chunk_overlap=0)
         doc = ExtractedDocument(
-            sections=[DocumentSection(
-                content="para one words here\n\npara two more text\n\npara three final words"
-            )]
+            sections=[
+                DocumentSection(
+                    content="para one words here\n\npara two more text\n\npara three final words"
+                )
+            ]
         )
         chunks = strategy.chunk(doc)
         assert len(chunks) >= 2
@@ -90,9 +88,7 @@ class TestRecursiveChunking:
 
     def test_falls_back_to_space(self):
         strategy = RecursiveChunking(chunk_size=3, chunk_overlap=0)
-        doc = ExtractedDocument(
-            sections=[DocumentSection(content="one two three four five six")]
-        )
+        doc = ExtractedDocument(sections=[DocumentSection(content="one two three four five six")])
         chunks = strategy.chunk(doc)
         assert len(chunks) >= 2
 

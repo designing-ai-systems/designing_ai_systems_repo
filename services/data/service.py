@@ -51,8 +51,10 @@ class DataService(data_pb2_grpc.DataServiceServicer, BaseServicer):
         self._vector_store = vector_store or create_vector_store()
 
         if embed_fn is None:
+
             def _placeholder_embed(texts, model):
                 return [[0.0] * 1536 for _ in texts]
+
             embed_fn = _placeholder_embed
 
         self._embedding_generator = EmbeddingGenerator(embed_fn=embed_fn)
@@ -217,14 +219,10 @@ class DataService(data_pb2_grpc.DataServiceServicer, BaseServicer):
 
     def DeleteDocument(self, request, context):
         try:
-            deleted = self._vector_store.delete_by_document(
-                request.index_name, request.document_id
-            )
+            deleted = self._vector_store.delete_by_document(request.index_name, request.document_id)
             docs = self._documents.get(request.index_name, {})
             docs.pop(request.document_id, None)
-            return data_pb2.DeleteDocumentResponse(
-                success=True, chunks_deleted=deleted
-            )
+            return data_pb2.DeleteDocumentResponse(success=True, chunks_deleted=deleted)
         except Exception as e:
             context.set_code(grpc.StatusCode.INTERNAL)
             context.set_details(str(e))
@@ -246,9 +244,7 @@ class DataService(data_pb2_grpc.DataServiceServicer, BaseServicer):
                 metadata_filters=self._extract_filters(request),
                 score_threshold=request.score_threshold,
             )
-            return data_pb2.SearchResponse(
-                results=[self._result_to_proto(r) for r in results]
-            )
+            return data_pb2.SearchResponse(results=[self._result_to_proto(r) for r in results])
         except Exception as e:
             context.set_code(grpc.StatusCode.INTERNAL)
             context.set_details(str(e))
@@ -268,9 +264,7 @@ class DataService(data_pb2_grpc.DataServiceServicer, BaseServicer):
                 metadata_filters=self._extract_filters(request),
                 score_threshold=request.score_threshold,
             )
-            return data_pb2.SearchResponse(
-                results=[self._result_to_proto(r) for r in results]
-            )
+            return data_pb2.SearchResponse(results=[self._result_to_proto(r) for r in results])
         except Exception as e:
             context.set_code(grpc.StatusCode.INTERNAL)
             context.set_details(str(e))
@@ -280,9 +274,7 @@ class DataService(data_pb2_grpc.DataServiceServicer, BaseServicer):
 
     def RegisterParser(self, request, context):
         try:
-            parser = self._load_plugin(
-                request.source_code, request.class_name, DocumentParser
-            )
+            parser = self._load_plugin(request.source_code, request.class_name, DocumentParser)
             self._pipeline.register_parser(request.format, parser)
             return data_pb2.RegisterParserResponse(
                 success=True,
@@ -293,18 +285,14 @@ class DataService(data_pb2_grpc.DataServiceServicer, BaseServicer):
 
     def RegisterChunkingStrategy(self, request, context):
         try:
-            strategy = self._load_plugin(
-                request.source_code, request.class_name, ChunkingStrategy
-            )
+            strategy = self._load_plugin(request.source_code, request.class_name, ChunkingStrategy)
             self._pipeline.register_chunking_strategy(request.name, strategy)
             return data_pb2.RegisterChunkingStrategyResponse(
                 success=True,
                 message=f"Strategy '{request.class_name}' registered as '{request.name}'",
             )
         except Exception as e:
-            return data_pb2.RegisterChunkingStrategyResponse(
-                success=False, message=str(e)
-            )
+            return data_pb2.RegisterChunkingStrategyResponse(success=False, message=str(e))
 
     def _load_plugin(self, source_code: bytes, class_name: str, base_class):
         """Write source to plugin dir, load with importlib, validate, instantiate."""

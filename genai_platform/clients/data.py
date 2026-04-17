@@ -54,9 +54,7 @@ class DataClient(BaseClient):
         return self._proto_to_index(resp)
 
     def list_indexes(self) -> List[Index]:
-        resp = self._stub.ListIndexes(
-            data_pb2.ListIndexesRequest(), metadata=self._metadata
-        )
+        resp = self._stub.ListIndexes(data_pb2.ListIndexesRequest(), metadata=self._metadata)
         return [self._proto_to_index(idx) for idx in resp.indexes]
 
     def delete_index(self, index_name: str) -> bool:
@@ -99,16 +97,12 @@ class DataClient(BaseClient):
         return [self._proto_to_doc_meta(d) for d in resp.documents]
 
     def get_document(self, index_name: str, document_id: str) -> DocumentMetadata:
-        request = data_pb2.GetDocumentRequest(
-            index_name=index_name, document_id=document_id
-        )
+        request = data_pb2.GetDocumentRequest(index_name=index_name, document_id=document_id)
         resp = self._stub.GetDocument(request, metadata=self._metadata)
         return self._proto_to_doc_meta(resp)
 
     def delete_document(self, index_name: str, document_id: str) -> bool:
-        request = data_pb2.DeleteDocumentRequest(
-            index_name=index_name, document_id=document_id
-        )
+        request = data_pb2.DeleteDocumentRequest(index_name=index_name, document_id=document_id)
         resp = self._stub.DeleteDocument(request, metadata=self._metadata)
         return resp.success
 
@@ -164,9 +158,7 @@ class DataClient(BaseClient):
         resp = self._stub.RegisterParser(request, metadata=self._metadata)
         return resp.success
 
-    def register_chunking_strategy(
-        self, name: str, strategy, version: str = "1.0.0"
-    ) -> bool:
+    def register_chunking_strategy(self, name: str, strategy, version: str = "1.0.0") -> bool:
         """Register a custom chunking strategy. Uses inspect to upload source."""
         source_code, class_name = self._extract_source(strategy)
         request = data_pb2.RegisterChunkingStrategyRequest(

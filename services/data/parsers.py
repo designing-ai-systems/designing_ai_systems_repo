@@ -49,9 +49,7 @@ class MarkdownParser(DocumentParser):
 
         if not heading_matches:
             paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
-            return ExtractedDocument(
-                sections=[DocumentSection(content=p) for p in paragraphs]
-            )
+            return ExtractedDocument(sections=[DocumentSection(content=p) for p in paragraphs])
 
         first_match = heading_matches[0]
         if first_match.start() > 0:
@@ -66,9 +64,7 @@ class MarkdownParser(DocumentParser):
             end = heading_matches[i + 1].start() if i + 1 < len(heading_matches) else len(text)
             body = text[start:end].strip()
             if body or heading:
-                sections.append(
-                    DocumentSection(content=body, heading=heading, level=level)
-                )
+                sections.append(DocumentSection(content=body, heading=heading, level=level))
 
         return ExtractedDocument(sections=sections)
 

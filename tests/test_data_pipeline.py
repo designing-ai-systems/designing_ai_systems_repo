@@ -102,9 +102,7 @@ class TestParserRegistry:
 
         class CustomParser(DocumentParser):
             def parse(self, file_bytes, filename):
-                return ExtractedDocument(
-                    sections=[DocumentSection(content="custom parsed")]
-                )
+                return ExtractedDocument(sections=[DocumentSection(content="custom parsed")])
 
         pipeline.register_parser("custom", CustomParser())
         assert "custom" in pipeline.parsers

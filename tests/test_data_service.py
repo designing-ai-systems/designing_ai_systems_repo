@@ -37,9 +37,7 @@ class TestCreateIndex:
             chunk_size=10,
             chunk_overlap=0,
         )
-        resp = svc.CreateIndex(
-            data_pb2.CreateIndexRequest(config=config, owner="me"), ctx
-        )
+        resp = svc.CreateIndex(data_pb2.CreateIndexRequest(config=config, owner="me"), ctx)
         assert resp.name == "test-idx"
         assert resp.owner == "me"
 
@@ -101,8 +99,11 @@ class TestIngestDocument:
         svc = _make_service()
         ctx = _make_context()
         config = data_pb2.IndexConfig(
-            name="test-idx", chunk_size=10, chunk_overlap=0,
-            embedding_model="fake-model", embedding_dimensions=4,
+            name="test-idx",
+            chunk_size=10,
+            chunk_overlap=0,
+            embedding_model="fake-model",
+            embedding_dimensions=4,
         )
         svc.CreateIndex(data_pb2.CreateIndexRequest(config=config), ctx)
 
@@ -120,9 +121,7 @@ class TestIngestDocument:
 
         # Wait for async processing
         for _ in range(50):
-            job_resp = svc.GetIngestJob(
-                data_pb2.GetIngestJobRequest(job_id=resp.job_id), ctx
-            )
+            job_resp = svc.GetIngestJob(data_pb2.GetIngestJobRequest(job_id=resp.job_id), ctx)
             if job_resp.status in ("completed", "failed"):
                 break
             time.sleep(0.1)
@@ -149,8 +148,11 @@ class TestDocumentManagement:
         svc = _make_service()
         ctx = _make_context()
         config = data_pb2.IndexConfig(
-            name="test-idx", chunk_size=10, chunk_overlap=0,
-            embedding_model="fake-model", embedding_dimensions=4,
+            name="test-idx",
+            chunk_size=10,
+            chunk_overlap=0,
+            embedding_model="fake-model",
+            embedding_dimensions=4,
         )
         svc.CreateIndex(data_pb2.CreateIndexRequest(config=config), ctx)
 
@@ -164,22 +166,16 @@ class TestDocumentManagement:
             ctx,
         )
         for _ in range(50):
-            job = svc.GetIngestJob(
-                data_pb2.GetIngestJobRequest(job_id=resp.job_id), ctx
-            )
+            job = svc.GetIngestJob(data_pb2.GetIngestJobRequest(job_id=resp.job_id), ctx)
             if job.status in ("completed", "failed"):
                 break
             time.sleep(0.1)
 
-        docs = svc.ListDocuments(
-            data_pb2.ListDocumentsRequest(index_name="test-idx"), ctx
-        )
+        docs = svc.ListDocuments(data_pb2.ListDocumentsRequest(index_name="test-idx"), ctx)
         assert len(docs.documents) >= 1
 
         doc = svc.GetDocument(
-            data_pb2.GetDocumentRequest(
-                index_name="test-idx", document_id="doc-1"
-            ),
+            data_pb2.GetDocumentRequest(index_name="test-idx", document_id="doc-1"),
             ctx,
         )
         assert doc.document_id == "doc-1"
@@ -188,8 +184,11 @@ class TestDocumentManagement:
         svc = _make_service()
         ctx = _make_context()
         config = data_pb2.IndexConfig(
-            name="test-idx", chunk_size=10, chunk_overlap=0,
-            embedding_model="fake-model", embedding_dimensions=4,
+            name="test-idx",
+            chunk_size=10,
+            chunk_overlap=0,
+            embedding_model="fake-model",
+            embedding_dimensions=4,
         )
         svc.CreateIndex(data_pb2.CreateIndexRequest(config=config), ctx)
 
@@ -203,17 +202,13 @@ class TestDocumentManagement:
             ctx,
         )
         for _ in range(50):
-            job = svc.GetIngestJob(
-                data_pb2.GetIngestJobRequest(job_id=resp.job_id), ctx
-            )
+            job = svc.GetIngestJob(data_pb2.GetIngestJobRequest(job_id=resp.job_id), ctx)
             if job.status in ("completed", "failed"):
                 break
             time.sleep(0.1)
 
         del_resp = svc.DeleteDocument(
-            data_pb2.DeleteDocumentRequest(
-                index_name="test-idx", document_id="doc-1"
-            ),
+            data_pb2.DeleteDocumentRequest(index_name="test-idx", document_id="doc-1"),
             ctx,
         )
         assert del_resp.success is True
@@ -222,8 +217,11 @@ class TestDocumentManagement:
 class TestSearch:
     def _setup_index_with_docs(self, svc, ctx):
         config = data_pb2.IndexConfig(
-            name="test-idx", chunk_size=10, chunk_overlap=0,
-            embedding_model="fake-model", embedding_dimensions=4,
+            name="test-idx",
+            chunk_size=10,
+            chunk_overlap=0,
+            embedding_model="fake-model",
+            embedding_dimensions=4,
         )
         svc.CreateIndex(data_pb2.CreateIndexRequest(config=config), ctx)
 
@@ -237,9 +235,7 @@ class TestSearch:
             ctx,
         )
         for _ in range(50):
-            job = svc.GetIngestJob(
-                data_pb2.GetIngestJobRequest(job_id=resp.job_id), ctx
-            )
+            job = svc.GetIngestJob(data_pb2.GetIngestJobRequest(job_id=resp.job_id), ctx)
             if job.status in ("completed", "failed"):
                 break
             time.sleep(0.1)
@@ -250,9 +246,7 @@ class TestSearch:
         self._setup_index_with_docs(svc, ctx)
 
         resp = svc.Search(
-            data_pb2.SearchRequest(
-                index_name="test-idx", query="hello", top_k=5
-            ),
+            data_pb2.SearchRequest(index_name="test-idx", query="hello", top_k=5),
             ctx,
         )
         assert len(resp.results) >= 1
@@ -263,9 +257,7 @@ class TestSearch:
         self._setup_index_with_docs(svc, ctx)
 
         resp = svc.HybridSearch(
-            data_pb2.HybridSearchRequest(
-                index_name="test-idx", query="hello", top_k=5
-            ),
+            data_pb2.HybridSearchRequest(index_name="test-idx", query="hello", top_k=5),
             ctx,
         )
         assert len(resp.results) >= 1
@@ -274,9 +266,7 @@ class TestSearch:
         svc = _make_service()
         ctx = _make_context()
         svc.Search(
-            data_pb2.SearchRequest(
-                index_name="no-such", query="test", top_k=5
-            ),
+            data_pb2.SearchRequest(index_name="no-such", query="test", top_k=5),
             ctx,
         )
         ctx.set_code.assert_called()

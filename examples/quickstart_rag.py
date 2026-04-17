@@ -86,9 +86,7 @@ def _start_servers():
     # Data Service
     data_port = get_service_port("data")
     data_servicer = DataService()
-    data_server = create_grpc_server(
-        servicer=data_servicer, port=data_port, service_name="data"
-    )
+    data_server = create_grpc_server(servicer=data_servicer, port=data_port, service_name="data")
     data_server.start()
 
     # Model Service

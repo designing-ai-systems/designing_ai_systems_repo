@@ -15,6 +15,7 @@ from services.models.models import (
 # Stub provider for ABC contract testing
 # ---------------------------------------------------------------------------
 
+
 class StubEmbeddingProvider(EmbeddingProvider):
     """Minimal provider for testing the ABC contract."""
 
@@ -38,6 +39,7 @@ class StubEmbeddingProvider(EmbeddingProvider):
 # ===========================================================================
 # 1. EmbeddingResponse dataclass
 # ===========================================================================
+
 
 class TestEmbeddingResponse:
     def test_basic_response(self):
@@ -65,6 +67,7 @@ class TestEmbeddingResponse:
 # 2. EmbeddingProvider ABC contract
 # ===========================================================================
 
+
 class TestEmbeddingProviderABC:
     def test_embed_returns_domain_type(self):
         provider = StubEmbeddingProvider()
@@ -88,6 +91,7 @@ class TestEmbeddingProviderABC:
 # ===========================================================================
 # 3. OpenAI embedding provider
 # ===========================================================================
+
 
 class TestOpenAIEmbeddingProvider:
     def test_embed_calls_openai_api(self):
@@ -138,6 +142,7 @@ class TestOpenAIEmbeddingProvider:
 # 4. HuggingFace embedding provider
 # ===========================================================================
 
+
 class TestHuggingFaceEmbeddingProvider:
     def test_embed_uses_sentence_transformers(self):
         import numpy as np
@@ -184,6 +189,7 @@ class TestHuggingFaceEmbeddingProvider:
 # ===========================================================================
 # 5. Model Service servicer — Embed RPC
 # ===========================================================================
+
 
 class TestServicerEmbed:
     def _make_service_with_embedding(self):
@@ -234,9 +240,7 @@ class TestServicerEmbed:
         svc = self._make_service_with_embedding()
         ctx = self._make_context()
 
-        resp = svc.ListEmbeddingModels(
-            models_pb2.ListEmbeddingModelsRequest(), ctx
-        )
+        resp = svc.ListEmbeddingModels(models_pb2.ListEmbeddingModelsRequest(), ctx)
         assert len(resp.models) >= 1
         names = [m.name for m in resp.models]
         assert "stub-embed" in names
@@ -245,6 +249,7 @@ class TestServicerEmbed:
 # ===========================================================================
 # 6. SDK client — embed() and list_embedding_models()
 # ===========================================================================
+
 
 class TestModelClientEmbed:
     def _make_client(self):
@@ -270,9 +275,7 @@ class TestModelClientEmbed:
             ],
             model="text-embedding-3-small",
             provider="openai",
-            usage=models_pb2.TokenUsage(
-                prompt_tokens=8, completion_tokens=0, total_tokens=8
-            ),
+            usage=models_pb2.TokenUsage(prompt_tokens=8, completion_tokens=0, total_tokens=8),
         )
         client._stub.Embed.return_value = mock_response
 

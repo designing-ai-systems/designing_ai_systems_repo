@@ -106,9 +106,7 @@ class IngestionPipeline:
         chunks = strategy.chunk(extracted)
 
         if not chunks:
-            return IngestedDocument(
-                document_id=document_id, chunk_count=0, index_name=index.name
-            )
+            return IngestedDocument(document_id=document_id, chunk_count=0, index_name=index.name)
 
         embeddings = self._embedding_generator.embed_chunks(
             chunks, model=index.config.embedding_model
