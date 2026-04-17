@@ -145,14 +145,19 @@ class TestOpenAIEmbeddingProvider:
 
 class TestHuggingFaceEmbeddingProvider:
     def test_embed_uses_sentence_transformers(self):
-        import numpy as np
-
         from services.models.embedding_providers.huggingface_provider import (
             HuggingFaceEmbeddingProvider,
         )
 
+        class FakeVector:
+            def __init__(self, vals):
+                self._vals = vals
+
+            def tolist(self):
+                return self._vals
+
         mock_model = MagicMock()
-        mock_model.encode.return_value = np.array([[0.1, 0.2], [0.3, 0.4]])
+        mock_model.encode.return_value = [FakeVector([0.1, 0.2]), FakeVector([0.3, 0.4])]
 
         provider = HuggingFaceEmbeddingProvider(model_names=["all-MiniLM-L6-v2"])
         provider._models = {"all-MiniLM-L6-v2": mock_model}
