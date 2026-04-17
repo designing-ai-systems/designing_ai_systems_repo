@@ -260,23 +260,24 @@ class PgvectorStore(VectorStore):
             rows = cur.fetchall()
         return [_row_to_index(row) for row in rows]
 
-    def update_index_stats(
+    def increment_index_stats(
         self,
         name: str,
-        document_count: int,
-        total_chunks: int,
+        documents_delta: int,
+        chunks_delta: int,
         last_ingested_at: datetime,
     ) -> None:
+        # Single UPDATE — no read-modify-write race between concurrent workers.
         with self._txn() as cur:
             cur.execute(
                 """
                 UPDATE data_indexes
-                   SET document_count = %s,
-                       total_chunks = %s,
+                   SET document_count = document_count + %s,
+                       total_chunks = total_chunks + %s,
                        last_ingested_at = %s
                  WHERE name = %s
                 """,
-                (document_count, total_chunks, last_ingested_at, name),
+                (documents_delta, chunks_delta, last_ingested_at, name),
             )
 
     # ----------------------------------------------------------------- documents

@@ -242,10 +242,10 @@ class DataService(data_pb2_grpc.DataServiceServicer, BaseServicer):
             document_id=claimed.payload.requested_document_id,
         )
 
-        self._vector_store.update_index_stats(
+        self._vector_store.increment_index_stats(
             name=index.name,
-            document_count=index.document_count + 1,
-            total_chunks=index.total_chunks + result.chunk_count,
+            documents_delta=1,
+            chunks_delta=result.chunk_count,
             last_ingested_at=datetime.utcnow(),
         )
 

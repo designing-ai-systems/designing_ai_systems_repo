@@ -513,14 +513,24 @@ class TestIndexMetadata:
         with pytest.raises(ValueError):
             store.create_index(_make_index("dup"))
 
-    def test_update_index_stats(self, store):
+    def test_increment_index_stats(self, store):
         store.create_index(_make_index("counted"))
         ts = datetime.utcnow()
-        store.update_index_stats("counted", document_count=7, total_chunks=42, last_ingested_at=ts)
+        store.increment_index_stats(
+            "counted", documents_delta=7, chunks_delta=42, last_ingested_at=ts
+        )
         got = store.get_index("counted")
         assert got.document_count == 7
         assert got.total_chunks == 42
         assert got.last_ingested_at is not None
+        # Second increment must stack atomically (exercises the SQL-level
+        # `document_count = document_count + %s` path in pgvector).
+        store.increment_index_stats(
+            "counted", documents_delta=3, chunks_delta=10, last_ingested_at=ts
+        )
+        got = store.get_index("counted")
+        assert got.document_count == 10
+        assert got.total_chunks == 52
 
     def test_delete_index_removes_metadata(self, store):
         store.create_index(_make_index("gone"))

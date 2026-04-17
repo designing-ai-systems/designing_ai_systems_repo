@@ -98,14 +98,14 @@ class VectorStore(ABC):
         """Return every index in the store."""
 
     @abstractmethod
-    def update_index_stats(
+    def increment_index_stats(
         self,
         name: str,
-        document_count: int,
-        total_chunks: int,
+        documents_delta: int,
+        chunks_delta: int,
         last_ingested_at: datetime,
     ) -> None:
-        """Refresh the counters on an existing index."""
+        """Atomically bump the counters on an index; safe under concurrent workers."""
 
     # ----------------------------------------------------------------- documents
 
@@ -271,19 +271,19 @@ class InMemoryVectorStore(VectorStore):
         with self._lock:
             return [copy.deepcopy(idx) for idx in self._indexes.values()]
 
-    def update_index_stats(
+    def increment_index_stats(
         self,
         name: str,
-        document_count: int,
-        total_chunks: int,
+        documents_delta: int,
+        chunks_delta: int,
         last_ingested_at: datetime,
     ) -> None:
         with self._lock:
             idx = self._indexes.get(name)
             if idx is None:
                 return
-            idx.document_count = document_count
-            idx.total_chunks = total_chunks
+            idx.document_count += documents_delta
+            idx.total_chunks += chunks_delta
             idx.last_ingested_at = last_ingested_at
 
     # ----------------------------------------------------------------- documents
