@@ -7,9 +7,12 @@ This example demonstrates all Session Service capabilities from Chapter 4:
 - Model-managed memory (save_memory, get_memory)
 - Pagination and context window strategies
 
-Run this after starting the gateway and session service.
+Runs the full suite against both storage backends:
+  1. In-memory (always)
+  2. PostgreSQL (auto-detected; skipped if unavailable)
 """
 
+import os
 import sys
 import threading
 import time
@@ -19,22 +22,40 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from genai_platform import GenAIPlatform
-from services.gateway.main import main as start_gateway
-from services.sessions.main import main as start_session_service
+from services.gateway.registry import ServiceRegistry
+from services.gateway.servers import create_grpc_server as create_gateway_grpc
+from services.gateway.servers import create_http_server
+from services.sessions.service import SessionService
+from services.sessions.store import InMemorySessionStorage
+from services.shared.server import create_grpc_server, get_service_port
+
+TEST_DB = "postgresql://localhost/genai_platform_test"
 
 
-def start_service_in_thread(service_func, service_name):
-    """Start a service in a background thread."""
+def _detect_postgres() -> bool:
+    """Return True if PostgreSQL is available, auto-creating the test DB if needed."""
+    try:
+        import psycopg2
+        from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
+    except ImportError:
+        return False
 
-    def run_service():
-        try:
-            service_func()
-        except KeyboardInterrupt:
-            pass
+    try:
+        conn = psycopg2.connect(TEST_DB)
+        conn.close()
+        return True
+    except psycopg2.OperationalError:
+        pass
 
-    thread = threading.Thread(target=run_service, daemon=True, name=service_name)
-    thread.start()
-    return thread
+    try:
+        conn = psycopg2.connect("postgresql://localhost/postgres")
+        conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
+        with conn.cursor() as cur:
+            cur.execute("CREATE DATABASE genai_platform_test")
+        conn.close()
+        return True
+    except Exception:
+        return False
 
 
 def print_section(title):
@@ -293,31 +314,56 @@ def test_conversation_workflow(platform):
     print("\n   ✓ Cleaned up test data")
 
 
-def run_all_tests():
-    """Run all test suites."""
-    print("\n" + "=" * 60)
-    print("  SESSION SERVICE COMPREHENSIVE TEST")
-    print("  Chapter 4: Teaching Your AI to Remember")
-    print("=" * 60)
+def _start_servers(storage):
+    """Start session service and gateway, returning server objects for cleanup."""
+    from http.server import HTTPServer
 
-    print("\nStarting services...")
+    HTTPServer.allow_reuse_address = True
 
-    # Start services
-    print("  Starting Session Service...")
-    start_service_in_thread(start_session_service, "SessionService")
-    time.sleep(2)
+    port = get_service_port("sessions")
+    servicer = SessionService(storage=storage)
+    session_server = create_grpc_server(servicer=servicer, port=port, service_name="sessions")
+    session_server.start()
 
-    print("  Starting API Gateway...")
-    start_service_in_thread(start_gateway, "Gateway")
-    time.sleep(2)
+    registry = ServiceRegistry()
+    sessions_addr = os.getenv("SESSIONS_SERVICE_ADDR", f"localhost:{port}")
+    registry.register_platform_service("sessions", sessions_addr)
+    models_addr = os.getenv("MODELS_SERVICE_ADDR", "localhost:50053")
+    registry.register_platform_service("models", models_addr)
 
-    print("\n✓ Services started successfully!\n")
+    grpc_port = int(os.getenv("GATEWAY_PORT", "50051"))
+    gateway_server = create_gateway_grpc(registry, grpc_port)
+    gateway_server.start()
 
-    # Create platform instance
+    http_port = int(os.getenv("GATEWAY_HTTP_PORT", "8080"))
+    http_server = create_http_server(registry, http_port)
+    http_thread = threading.Thread(target=http_server.serve_forever, daemon=True)
+    http_thread.start()
+
+    return session_server, gateway_server, http_server
+
+
+def _stop_servers(session_server, gateway_server, http_server):
+    """Gracefully stop all servers."""
+    http_server.shutdown()
+    gateway_server.stop(grace=0)
+    session_server.stop(grace=0)
+
+
+def run_tests_with_backend(backend_name, storage):
+    """Run the full test suite against a given storage backend."""
+    print("\n" + "#" * 60)
+    print(f"  BACKEND: {backend_name}")
+    print("#" * 60)
+
+    print(f"\n  Starting services with {backend_name} storage...")
+    session_server, gateway_server, http_server = _start_servers(storage)
+    time.sleep(1)
+    print("  ✓ Services started\n")
+
     platform = GenAIPlatform()
 
     try:
-        # Run test suites
         session_id_1, session_id_2 = test_session_management(platform)
         test_message_operations(platform, session_id_1)
         test_model_managed_memory(platform)
@@ -330,33 +376,133 @@ def run_all_tests():
         platform.sessions.delete_session(session_id_2)
         print("✓ Cleanup complete")
 
-        print_section("TEST SUMMARY")
-        print("\n✓ All tests passed successfully!")
-        print("\nTested functionality:")
-        print("  - Session creation and retrieval")
-        print("  - Message storage with tool calls")
-        print("  - Message pagination")
-        print("  - Model-managed memory (save/get/delete)")
-        print("  - Session-scoped vs user-scoped memory")
-        print("  - Complete conversation workflow")
-        print("  - Memory persistence across sessions")
+        print(f"\n✓ All {backend_name} tests passed!")
 
-        print("\nServices are running in background.")
-        print("Press Ctrl+C to stop.")
+    finally:
+        _stop_servers(session_server, gateway_server, http_server)
+        time.sleep(0.5)
 
-        # Keep services running
-        try:
-            while True:
-                time.sleep(1)
-        except KeyboardInterrupt:
-            print("\n\nStopping services...")
 
-    except Exception as e:
-        print(f"\n❌ Test failed with error: {e}")
-        import traceback
+def _insert_demo_data(storage):
+    """Leave sample rows in PostgreSQL so users can browse them in a GUI like Postico."""
+    from services.sessions.models import Function, Message, ToolCall
 
-        traceback.print_exc()
-        raise
+    print_section("Inserting Demo Data (PostgreSQL)")
+
+    # Clear any leftover test data so only demo rows remain
+    with storage.conn.cursor() as cur:
+        cur.execute("TRUNCATE messages, memories, sessions CASCADE")
+    storage.conn.commit()
+
+    # Demo patient session
+    session = storage.get_or_create_session(user_id="demo-patient", session_id="demo-session-1")
+    print(f"  Created session: {session.session_id}")
+
+    storage.add_messages(
+        "demo-session-1",
+        [
+            Message(role="system", content="You are a helpful patient intake assistant."),
+            Message(role="user", content="Hi, I need to schedule a follow-up appointment."),
+            Message(
+                role="assistant",
+                content=None,
+                tool_calls=[
+                    ToolCall(
+                        id="call_demo_1",
+                        type="function",
+                        function=Function(
+                            name="check_availability",
+                            arguments='{"date": "2026-04-22", "doctor": "Dr. Smith"}',
+                        ),
+                    )
+                ],
+            ),
+            Message(
+                role="tool",
+                content='{"slots": ["9:00 AM", "11:30 AM", "3:00 PM"]}',
+                tool_call_id="call_demo_1",
+            ),
+            Message(
+                role="assistant",
+                content="Dr. Smith has openings on April 22nd at 9 AM, 11:30 AM, and 3 PM.",
+            ),
+            Message(role="user", content="11:30 AM please. Also, I'm allergic to penicillin."),
+            Message(
+                role="assistant",
+                content="Booked for 11:30 AM on April 22nd. I've noted your penicillin allergy.",
+            ),
+        ],
+    )
+    print("  Added 7 messages (including a tool call)")
+
+    # Demo memories
+    storage.save_memory("demo-patient", "allergies", ["penicillin"])
+    storage.save_memory("demo-patient", "preferred_doctor", "Dr. Smith")
+    storage.save_memory(
+        "demo-patient",
+        "medications",
+        [
+            {"name": "lisinopril", "dosage": "10mg", "frequency": "daily"},
+            {"name": "metformin", "dosage": "500mg", "frequency": "twice daily"},
+        ],
+    )
+    print("  Saved 3 memories (allergies, preferred_doctor, medications)")
+
+    # Second session for the same patient
+    storage.get_or_create_session(user_id="demo-patient", session_id="demo-session-2")
+    storage.add_messages(
+        "demo-session-2",
+        [
+            Message(role="user", content="Can you remind me what medications I'm on?"),
+            Message(
+                role="assistant",
+                content="You're taking lisinopril 10mg daily and metformin 500mg twice daily.",
+            ),
+        ],
+    )
+    print("  Created a second session with 2 messages")
+
+    print("\n  ✓ Demo data ready! Open Postico and connect to 'genai_platform_test' to browse.")
+    print("    Tables: sessions, messages, memories")
+
+
+def run_all_tests():
+    """Run all test suites against both storage backends."""
+    print("\n" + "=" * 60)
+    print("  SESSION SERVICE COMPREHENSIVE TEST")
+    print("  Chapter 4: Teaching Your AI to Remember")
+    print("=" * 60)
+
+    # --- Pass 1: In-memory ---
+    run_tests_with_backend("In-Memory", InMemorySessionStorage())
+
+    # --- Pass 2: PostgreSQL (if available) ---
+    pg_available = _detect_postgres()
+    if pg_available:
+        from services.sessions.postgres_store import PostgresSessionStorage
+
+        pg_storage = PostgresSessionStorage(connection_string=TEST_DB)
+        run_tests_with_backend("PostgreSQL", pg_storage)
+        _insert_demo_data(pg_storage)
+    else:
+        print("\n" + "-" * 60)
+        print("  Skipping PostgreSQL tests (server not available)")
+        print("  To enable: brew install postgresql@16 && brew services start postgresql@16")
+        print("-" * 60)
+
+    print_section("FINAL SUMMARY")
+    backends = ["In-Memory"]
+    if pg_available:
+        backends.append("PostgreSQL")
+    print(f"\n✓ All tests passed on: {', '.join(backends)}")
+    print("\nTested functionality:")
+    print("  - Session creation and retrieval")
+    print("  - Message storage with tool calls")
+    print("  - Message pagination")
+    print("  - Model-managed memory (save/get/delete)")
+    print("  - Session-scoped vs user-scoped memory")
+    print("  - Complete conversation workflow")
+    print("  - Memory persistence across sessions")
 
 
 if __name__ == "__main__":

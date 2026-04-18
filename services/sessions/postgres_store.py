@@ -187,7 +187,7 @@ class PostgresSessionStorage(SessionStorage):
         with self.conn.cursor() as cur:
             cur.execute(query, params)
             rows = cur.fetchall()
-        return {r["key"]: json.loads(r["value"]) for r in rows}
+        return {r["key"]: r["value"] for r in rows}
 
     def delete_memory(self, user_id: str, key: str, session_id: Optional[str] = None) -> bool:
         query = "DELETE FROM memories WHERE user_id = %s AND key = %s AND session_id = %s"

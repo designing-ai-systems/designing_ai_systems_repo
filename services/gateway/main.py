@@ -32,6 +32,8 @@ def main():
     registry.register_platform_service("sessions", sessions_addr)
     models_addr = os.getenv("MODELS_SERVICE_ADDR", "localhost:50053")
     registry.register_platform_service("models", models_addr)
+    data_addr = os.getenv("DATA_SERVICE_ADDR", "localhost:50054")
+    registry.register_platform_service("data", data_addr)
     guardrails_addr = os.getenv("GUARDRAILS_SERVICE_ADDR", "localhost:50055")
     registry.register_platform_service("guardrails", guardrails_addr)
     tools_addr = os.getenv("TOOLS_SERVICE_ADDR", "localhost:50056")

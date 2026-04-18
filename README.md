@@ -6,12 +6,13 @@ Production-ready platform for building GenAI applications with multi-provider su
 
 - **Multi-provider inference**: OpenAI, Anthropic (with streaming)
 - **Session management**: Conversation history and model-managed memory
+- **Data & RAG pipeline**: Document ingestion, chunking, embedding, vector search, hybrid search
 - **Tool management**: Registration, discovery, versioning, sandboxed execution
 - **Guardrails**: Input validation, output filtering, policy enforcement
 - **Domain dataclasses**: Clean Python API -- never exposes Protocol Buffers
 - **Model discovery**: Query capabilities, register custom models
 - **Prompt registry**: Centralized system prompt management
-- **Storage abstraction**: In-memory (dev) or PostgreSQL (production)
+- **Storage abstraction**: In-memory (dev) or PostgreSQL + pgvector (production)
 - **Service architecture**: gRPC microservices with unified API Gateway
 
 ## Requirements
@@ -45,30 +46,29 @@ ruff format --check .
 
 ### Optional: PostgreSQL storage
 
-By default the Session Service uses in-memory storage. To persist sessions
-across restarts, use PostgreSQL.
+By default the Session Service uses in-memory storage. To persist sessions and
+enable the Data Service's vector search, use PostgreSQL with the `pgvector`
+extension. Both services share one database (separate tables) and one server.
 
 #### macOS (Homebrew)
 
 ```bash
-# Install PostgreSQL 16
-brew install postgresql@16
+# Install PostgreSQL 17 and pgvector (required for Data Service)
+brew install postgresql@17 pgvector
 
-# Start the server (runs in the background, auto-starts on login)
-brew services start postgresql@16
+# Start the server (auto-starts on login)
+brew services start postgresql@17
 
-# Create the database
+# Create the database and apply both schemas
 createdb genai_platform
-
-# Apply the schema
 psql genai_platform < services/sessions/schema.sql
+psql genai_platform < services/data/schema.sql
 ```
 
-> **Tip:** If `psql` / `createdb` are not on your PATH after install, add the
-> Homebrew PostgreSQL bin directory:
+> **Tip:** If `psql` / `createdb` are not on your PATH, link PostgreSQL 17
+> (it is keg-only by default):
 > ```bash
-> echo 'export PATH="/opt/homebrew/opt/postgresql@16/bin:$PATH"' >> ~/.zshrc
-> source ~/.zshrc
+> brew link --force postgresql@17
 > ```
 
 #### Install the Python driver and configure
@@ -76,12 +76,16 @@ psql genai_platform < services/sessions/schema.sql
 ```bash
 pip install -e ".[postgres]"
 
-# Set env vars before starting the session service:
+# Set env vars before starting the services:
 export SESSION_STORAGE=postgres
+export VECTOR_STORE=pgvector
 export DB_CONNECTION_STRING="postgresql://localhost/genai_platform"
 ```
 
-The session service will now read and write to PostgreSQL.
+Both services will now read and write to PostgreSQL. Running a local
+PostgreSQL 17 with `pgvector` also enables the `test_data_comprehensive.py`
+pgvector tests to run locally (mirroring how the Session Service tests run
+against your local server).
 
 ## Quick Start
 
@@ -104,9 +108,10 @@ python examples/quickstart_tools.py
 ```bash
 python -m services.sessions.main    # Terminal 1
 python -m services.models.main      # Terminal 2
-python -m services.tools.main       # Terminal 3
-python -m services.guardrails.main  # Terminal 4
-python -m services.gateway.main     # Terminal 5
+python -m services.data.main        # Terminal 3
+python -m services.tools.main       # Terminal 4
+python -m services.guardrails.main  # Terminal 5
+python -m services.gateway.main     # Terminal 6
 ```
 
 ## Usage
@@ -164,6 +169,37 @@ for msg in messages:
 # Model-managed memory
 platform.sessions.save_memory("user-123", "allergies", ["penicillin"])
 memories = platform.sessions.get_memory("user-123")
+```
+
+### Data Service
+
+```python
+from genai_platform import GenAIPlatform
+from services.data.models import IndexConfig
+
+platform = GenAIPlatform()
+
+# Create an index
+config = IndexConfig(name="company-docs", chunking_strategy="fixed", chunk_size=512)
+index = platform.data.create_index(config, owner="team-a")
+
+# Ingest a document (async -- returns an IngestJob)
+job = platform.data.ingest("company-docs", "handbook.txt", b"...", metadata={"dept": "hr"})
+
+# Poll for completion
+status = platform.data.get_ingest_status(job.job_id)
+print(status.status)  # "queued" → "processing" → "completed"
+
+# Semantic search
+results = platform.data.search("company-docs", query="vacation policy", top_k=5)
+for r in results:
+    print(f"[{r.score:.2f}] {r.text[:100]}")
+
+# Hybrid search (vector + keyword via Reciprocal Rank Fusion)
+results = platform.data.hybrid_search("company-docs", query="vacation policy")
+
+# Register a custom parser (dynamic code loading)
+platform.data.register_parser("custom-fmt", my_parser_instance)
 ```
 
 ### Tool Service
@@ -237,11 +273,13 @@ genai_platform/
 │   └── clients/               # Service clients
 │       ├── sessions.py        #   SessionClient
 │       ├── models.py          #   ModelClient (with fallback)
+│       ├── data.py            #   DataClient (indexes, ingest, search)
 │       ├── tools.py           #   ToolClient (register, discover, execute)
 │       └── guardrails.py      #   GuardrailsClient (validate, filter, policy)
 ├── proto/                     # Protocol Buffer definitions
 │   ├── sessions.proto         # Session Service contract
 │   ├── models.proto           # Model Service contract
+│   ├── data.proto             # Data Service contract
 │   ├── tools.proto            # Tool Service contract
 │   └── guardrails.proto       # Guardrails Service contract
 ├── services/
@@ -256,6 +294,17 @@ genai_platform/
 │   │   ├── models.py          #   Domain dataclasses (ChatResponse, ...)
 │   │   ├── service.py         #   gRPC servicer
 │   │   └── providers/         #   Provider adapters (OpenAI, Anthropic)
+│   ├── data/                  # Data Service (Chapter 5)
+│   │   ├── models.py          #   Domain dataclasses (Index, Chunk, SearchResult, ...)
+│   │   ├── parsers.py         #   DocumentParser ABC + PlainText, Markdown parsers
+│   │   ├── chunking.py        #   ChunkingStrategy ABC + Fixed, Recursive, StructureAware
+│   │   ├── embedding.py       #   EmbeddingGenerator (wraps Model Service)
+│   │   ├── store.py           #   VectorStore ABC + InMemoryVectorStore
+│   │   ├── pgvector_store.py  #   PostgreSQL + pgvector implementation
+│   │   ├── schema.sql         #   Database schema (pgvector, full-text search)
+│   │   ├── search.py          #   SearchOrchestrator + Reciprocal Rank Fusion
+│   │   ├── pipeline.py        #   IngestionPipeline (parse → chunk → embed → store)
+│   │   └── service.py         #   gRPC servicer (proto <-> domain boundary)
 │   ├── tools/                 # Tool Service (Chapter 6, grpc.aio)
 │   │   ├── models.py          #   Domain dataclasses (ToolDefinition, ...)
 │   │   ├── store.py           #   ToolRegistry ABC + InMemoryToolRegistry
@@ -293,6 +342,19 @@ Each source file maps to specific listings in [Designing AI Systems](https://www
 | `services/sessions/service.py` | 4.15 (gRPC servicer) |
 | `genai_platform/clients/sessions.py` | 4.16 (SessionClient setup), 4.17 (get_or_create), 4.21 (memory methods) |
 | `examples/quickstart_conversation.py` | 4.18 (session workflow), 4.22 (memory workflow) |
+| **Data Service (Chapter 5)** | |
+| `services/data/models.py` | 5.1 (IndexConfig), 5.3 (Index), 5.4 (DocumentSection, ExtractedDocument), 5.7 (DocumentMetadata), 5.8 (Chunk), 5.15 (IngestJob), 5.17 (SearchResult) |
+| `services/data/parsers.py` | 5.4 (DocumentParser ABC), 5.5 (format detection) |
+| `services/data/chunking.py` | 5.9 (ChunkingStrategy ABC), 5.11 (FixedSizeChunking) |
+| `services/data/embedding.py` | 5.12 (EmbeddingGenerator) |
+| `services/data/store.py` | 5.16 (VectorStore write ops), 5.17 (VectorStore search), 5.21 (keyword_search) |
+| `services/data/pgvector_store.py` | 5.19 (PgvectorStore search) |
+| `services/data/schema.sql` | 5.18 (pgvector schema), 5.22 (full-text search column) |
+| `services/data/search.py` | 5.20 (search orchestration), 5.23 (hybrid search + RRF) |
+| `services/data/pipeline.py` | 5.5 (format routing), 5.13 (document ingestion) |
+| `services/data/service.py` | 5.2 (index management), 5.14 (document management), 5.15 (async ingest) |
+| `proto/data.proto` | 5.24 (gRPC contract) |
+| `genai_platform/clients/data.py` | 5.25 (DataClient SDK wrapper) |
 | **Tool Service (Chapter 6)** | |
 | `proto/tools.proto` | 6.1 (ToolService contract), 6.2 (ToolDefinition), 6.3 (ToolBehavior/RateLimits/CostMetadata), 6.7 (DiscoverToolsRequest), 6.17 (ExecutionLimits) |
 | `services/tools/models.py` | 6.2 (ToolDefinition), 6.3 (ToolBehavior, RateLimits, CostMetadata), 6.15 (ToolTask), 6.17 (ExecutionLimits) |
@@ -314,10 +376,11 @@ Each source file maps to specific listings in [Designing AI Systems](https://www
 1. **Domain types at the core**: Business logic uses Python dataclasses, never Protocol Buffers.
 2. **Proto at the boundary**: gRPC servicers convert between proto messages and domain types.
 3. **Provider abstraction**: All LLM providers implement the same `ModelProvider` ABC with domain types.
-4. **Storage abstraction**: `SessionStorage` / `ToolRegistry` / `PolicyStore` ABCs with swappable backends.
+4. **Storage abstraction**: `SessionStorage`, `VectorStore`, `ToolRegistry`, and `PolicyStore` ABCs with swappable backends (in-memory, PostgreSQL/pgvector).
 5. **SDK hides gRPC**: Clients return dataclasses to callers. Proto is an internal detail.
-6. **Circuit breaker**: Tool execution protected by closed/open/half-open state machine (Listing 6.18).
-7. **Credential isolation**: Tools reference credentials by name; secrets stored separately (Listing 6.13-6.14).
+6. **Dynamic extensibility**: Custom parsers and chunking strategies can be registered at runtime via the SDK (source code is uploaded over gRPC and loaded by the Data Service).
+7. **Circuit breaker**: Tool execution protected by closed/open/half-open state machine (Listing 6.18).
+8. **Credential isolation**: Tools reference credentials by name; secrets stored separately (Listing 6.13-6.14).
 
 ## Running Tests
 
@@ -330,10 +393,10 @@ pytest tests/ -v
 
 - **Model Service** (Chapter 3): OpenAI, Anthropic, streaming, prompt management, custom models, client-side fallback
 - **Session Service** (Chapter 4): Messages, pagination, model-managed memory, PostgreSQL
+- **Data Service** (Chapter 5): Document ingestion, chunking, vector/hybrid search, pgvector, dynamic parser registration
 - **Tool Service** (Chapter 6): Registration, discovery (namespace/capability/tags), versioning, sandboxed execution, circuit breaker, credential store
 - **Guardrails Service** (Chapter 6): Input validation (prompt injection, PII), output filtering (PII redaction), policy enforcement, violation reporting
-- **API Gateway**: gRPC proxy with service discovery (sessions, models, tools, guardrails); sync client to backends (tools/guardrails use grpc.aio servers, compatible at the wire level)
-- Data Service (Chapter 5): planned -- knowledge indexes, ingestion pipeline, chunking, embeddings
+- **API Gateway**: gRPC proxy with service discovery (sessions, models, data, tools, guardrails); sync client to backends (tools/guardrails use grpc.aio servers, compatible at the wire level)
 - Observability & Experimentation (Chapter 7): planned -- traces, spans, structured logging, experimentation
 - Workflow Service (Chapter 8): planned -- runtime server, async jobs, container deployment
 - AI Assistant (Chapter 9): planned -- agent loop, memory, knowledge, tools, safety, observability
