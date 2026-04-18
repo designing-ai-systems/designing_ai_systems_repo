@@ -32,6 +32,8 @@ def main():
     registry.register_platform_service("sessions", sessions_addr)
     models_addr = os.getenv("MODELS_SERVICE_ADDR", "localhost:50053")
     registry.register_platform_service("models", models_addr)
+    data_addr = os.getenv("DATA_SERVICE_ADDR", "localhost:50054")
+    registry.register_platform_service("data", data_addr)
 
     # Register workflows (in production, this would come from Workflow Service)
     # For now, we can register manually for testing

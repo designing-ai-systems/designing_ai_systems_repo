@@ -9,7 +9,7 @@ from typing import Dict, Optional
 
 import grpc
 
-from proto import models_pb2_grpc, sessions_pb2_grpc
+from proto import data_pb2_grpc, models_pb2_grpc, sessions_pb2_grpc
 from services.gateway.registry import ServiceRegistry
 
 
@@ -27,6 +27,7 @@ class GenericProxy:
         self._stub_factories: Dict[str, callable] = {
             "sessions": lambda channel: sessions_pb2_grpc.SessionServiceStub(channel),
             "models": lambda channel: models_pb2_grpc.ModelServiceStub(channel),
+            "data": lambda channel: data_pb2_grpc.DataServiceStub(channel),
         }
 
     def _extract_target_service(self, context) -> Optional[str]:
@@ -150,6 +151,19 @@ class ModelServiceProxy(GenericServiceProxy, models_pb2_grpc.ModelServiceService
 
     Inherits from GenericServiceProxy (automatic forwarding) and
     ModelServiceServicer (gRPC interface requirement).
+
+    All methods automatically forwarded - no manual implementation needed!
+    """
+
+    pass
+
+
+class DataServiceProxy(GenericServiceProxy, data_pb2_grpc.DataServiceServicer):
+    """
+    Proxy handler for Data Service.
+
+    Inherits from GenericServiceProxy (automatic forwarding) and
+    DataServiceServicer (gRPC interface requirement).
 
     All methods automatically forwarded - no manual implementation needed!
     """

@@ -107,6 +107,14 @@ class ResponseFormat:
     type: str = "text"
 
 
+@dataclass
+class EmbeddingResponse:
+    embeddings: List[List[float]]
+    model: str = ""
+    provider: str = ""
+    usage: Optional[TokenUsage] = None
+
+
 # --- Operational configs (Listings 3.11-3.16) ---
 
 

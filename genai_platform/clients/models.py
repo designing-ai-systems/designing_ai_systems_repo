@@ -20,6 +20,7 @@ from proto import models_pb2, models_pb2_grpc
 from services.models.models import (
     ChatChunk,
     ChatResponse,
+    EmbeddingResponse,
     FallbackConfig,
     ModelCapability,
     ModelInfo,
@@ -182,6 +183,46 @@ class ModelClient(BaseClient):
             supports_vision=caps.supports_vision,
             supports_tools=caps.supports_tools,
         )
+
+    # ==================== Embedding ====================
+
+    def embed(
+        self,
+        texts: List[str],
+        model: str,
+    ) -> EmbeddingResponse:
+        """Generate embeddings for a list of texts. Returns EmbeddingResponse dataclass."""
+        request = models_pb2.EmbedRequest(texts=texts, model=model)
+        resp = self._stub.Embed(request, metadata=self._metadata)
+        usage = None
+        if resp.HasField("usage"):
+            usage = TokenUsage(
+                prompt_tokens=resp.usage.prompt_tokens,
+                completion_tokens=resp.usage.completion_tokens,
+                total_tokens=resp.usage.total_tokens,
+            )
+        return EmbeddingResponse(
+            embeddings=[list(e.values) for e in resp.embeddings],
+            model=resp.model,
+            provider=resp.provider,
+            usage=usage,
+        )
+
+    def list_embedding_models(self) -> List[ModelInfo]:
+        """List available embedding models. Returns list of ModelInfo dataclasses."""
+        resp = self._stub.ListEmbeddingModels(
+            models_pb2.ListEmbeddingModelsRequest(), metadata=self._metadata
+        )
+        return [
+            ModelInfo(
+                name=m.name,
+                provider=m.provider,
+                capabilities=ModelCapability(
+                    context_window=m.capabilities.context_window,
+                ),
+            )
+            for m in resp.models
+        ]
 
     # ==================== Prompt Management ====================
 

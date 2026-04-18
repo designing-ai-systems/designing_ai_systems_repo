@@ -2,50 +2,89 @@
 
 ## Overview
 
-The Model Service provides a unified interface to AI models with a simple principle: **provider adapters auto-discover built-in models, users register custom models**.
+The Model Service provides a unified interface to AI models with two core principles:
 
-This aligns with Chapter 3's architecture while keeping configuration minimal.
+1. **Provider adapters auto-discover built-in models** — zero configuration for commercial APIs
+2. **Separate ABCs for separate capabilities** — LLM inference (`ModelProvider`) and embedding (`EmbeddingProvider`) are distinct abstractions in distinct folders
+
+This aligns with Chapters 3 and 5 of the book.
 
 ## Core Principle
 
 **Zero Config for Common Case:**
 ```bash
-# Just set API keys - models work automatically
+# Just set API keys - models and embeddings work automatically
 OPENAI_API_KEY=sk-...
 ANTHROPIC_API_KEY=sk-ant-...
 ```
 
 **Flexible When Needed:**
 ```python
-# Register custom models or override defaults
-platform.models.register_model(...)
+platform.models.register_model(name="my-llama", endpoint="http://localhost:8000/v1", adapter_type="openai")
 ```
 
 ## Architecture
 
-### 1. Provider Adapters (`providers/`)
+### 1. Chat Provider Adapters (`providers/`)
 
-**Purpose**: Know HOW to talk to model APIs.
+**Purpose**: LLM inference — next-token prediction via `chat()` and `chat_stream()`.
 
 Each adapter:
 - Implements the `ModelProvider` interface
 - Auto-discovers its supported models via `get_supported_models()`
-- Translates between platform format and provider API
+- Translates between platform domain types and provider API
 
 **Available Adapters:**
-- `OpenAIProvider` - OpenAI API format (gpt-4o, gpt-4o-mini, etc.)
-- `AnthropicProvider` - Anthropic API format (claude-3-5-sonnet, etc.)
-- Future: `VLLMProvider` - vLLM/OpenAI-compatible format
+- `OpenAIProvider` — OpenAI Chat Completions API (gpt-4o, gpt-4o-mini)
+- `AnthropicProvider` — Anthropic Messages API (claude-sonnet-4-5, claude-haiku-4-5, claude-opus-4-5)
+- Future: `VLLMProvider` — vLLM/OpenAI-compatible format
 
-**Key Methods:**
+**ABC (`providers/base.py`):**
 ```python
 class ModelProvider(ABC):
-    def chat(...) -> ChatResponse
-    def chat_stream(...) -> Iterator[ChatChunk]
-    def get_supported_models() -> List[ModelInfo]  # Report supported models
+    def chat(model, messages, config, ...) -> ChatResponse
+    def chat_stream(model, messages, config, ...) -> Iterator[ChatChunk]
+    def get_supported_models() -> List[ModelInfo]
 ```
 
-### 2. Model Registry (`store.py`)
+### 2. Embedding Provider Adapters (`embedding_providers/`)
+
+**Purpose**: Text-to-vector embedding via `embed()`. Separate from chat because it is a fundamentally different capability with different inputs, outputs, and provider landscape.
+
+Each adapter:
+- Implements the `EmbeddingProvider` interface
+- Auto-discovers its supported embedding models via `get_supported_embedding_models()`
+
+**Available Adapters:**
+- `OpenAIEmbeddingProvider` — OpenAI Embeddings API (text-embedding-3-small, text-embedding-3-large, text-embedding-ada-002)
+- `HuggingFaceEmbeddingProvider` — sentence-transformers for local embedding (any HuggingFace model, e.g. all-MiniLM-L6-v2). Optional dependency.
+
+**ABC (`embedding_providers/base.py`):**
+```python
+class EmbeddingProvider(ABC):
+    def embed(texts: List[str], model: str) -> EmbeddingResponse
+    def get_supported_embedding_models() -> List[ModelInfo]
+```
+
+**Why separate ABCs and folders:**
+- Anthropic has no embedding API — a combined ABC would force a broken stub
+- HuggingFace sentence-transformers has no chat API — same problem in reverse
+- OpenAI has both capabilities but they're different API surfaces (`chat.completions.create` vs `embeddings.create`)
+- Each folder grows independently as new providers are added
+
+### 3. Domain Models (`models.py`)
+
+Python dataclasses that form the clean boundary between gRPC protobuf and internal logic:
+
+- `ChatMessage`, `ChatConfig`, `ChatResponse`, `ChatChunk` — chat types
+- `EmbeddingResponse` — embedding result (list of vectors + metadata)
+- `ModelInfo`, `ModelCapability` — model discovery
+- `TokenUsage` — token accounting
+- `FallbackConfig`, `RetryConfig`, `RoutingConfig` — operational configs
+
+The servicer converts proto → domain at the boundary; all internal logic uses domain types.
+
+### 4. Model Registry (`store.py`)
 
 **Purpose**: Stores explicit model registrations (custom + overrides).
 
@@ -55,217 +94,246 @@ class ModelProvider(ABC):
 
 **NOT for:** Built-in commercial models (those are auto-discovered).
 
+### 5. Prompt Registry (`store.py`)
+
+**Purpose**: Version and manage system prompts. Standard registry pattern.
+
+### 6. Model Service Servicer (`service.py`)
+
+**Main orchestrator** with two parallel provider registries:
+
 ```python
-class ModelRegistry:
-    def register(name, endpoint, capabilities, adapter_type)
-    def get(name) -> RegisteredModel
-    def list_all() -> List[RegisteredModel]
+class ModelService(ModelServiceServicer, BaseServicer):
+    self._providers: Dict[str, ModelProvider]              # chat
+    self._embedding_providers: Dict[str, EmbeddingProvider]  # embedding
 ```
 
-### 3. Prompt Registry (`store.py`)
+Handles all gRPC RPCs: `Chat`, `ChatStream`, `Embed`, `ListModels`, `ListEmbeddingModels`, prompt management, and model registry operations.
 
-**Purpose**: Version and manage system prompts.
+### 7. SDK Client (`genai_platform/clients/models.py`)
 
-Standard registry pattern - unchanged.
+`ModelClient` provides high-level Python methods that hide gRPC details:
 
-### 4. Model Service (`service.py`)
+```python
+# Chat
+response = platform.models.chat(model="gpt-4o", messages=[...])
 
-**Main orchestrator** with clean resolution logic.
+# Streaming
+for chunk in platform.models.chat_stream(model="gpt-4o", messages=[...]):
+    print(chunk.token, end="")
 
-## Resolution Flow
+# Embedding
+resp = platform.models.embed(texts=["hello", "world"], model="text-embedding-3-small")
 
-When a request comes in for model "X":
+# Discovery
+models = platform.models.list_models()
+embedding_models = platform.models.list_embedding_models()
+```
+
+Supports client-side fallback chains via `FallbackConfig`.
+
+### 8. gRPC Contract (`proto/models.proto`)
+
+Defines all RPCs on the `ModelService`:
+
+| RPC | Purpose |
+|---|---|
+| `Chat` | Synchronous chat completion |
+| `ChatStream` | Streaming chat completion |
+| `Embed` | Text embedding |
+| `ListModels` | Discover available chat models |
+| `ListEmbeddingModels` | Discover available embedding models |
+| `RegisterPrompt` / `GetPrompt` / `ListPrompts` | Prompt management |
+| `RegisterModel` / `ListRegisteredModels` / `GetModelStatus` | Custom model registry |
+
+### 9. Gateway Integration
+
+The Model Service is accessed through the API Gateway (`services/gateway/`). The gateway's `ModelServiceProxy` in `grpc_proxy.py` forwards all RPCs to the Model Service backend. Clients never connect to the Model Service directly — they connect to the gateway and use `x-target-service: models` metadata for routing.
+
+## Resolution Flows
+
+### Chat Resolution
+
+When a `Chat` or `ChatStream` request comes in for model "X":
 
 ```
 1. Check ModelRegistry (explicit registrations)
-   - Custom models
-   - Overrides of built-in models
+   - Custom models, overrides of built-in models
    
-2. Check provider adapters (auto-discovered)
+2. Check chat provider adapters (auto-discovered)
    - OpenAI models (if OPENAI_API_KEY set)
    - Anthropic models (if ANTHROPIC_API_KEY set)
    
-3. Return None if not found
+3. Return NOT_FOUND if no match
 ```
 
-### Examples
+### Embedding Resolution
 
-**Request "gpt-4o"** (not registered):
-```
-1. Registry check: Not found
-2. Provider check: OpenAIProvider reports it supports "gpt-4o"
-3. → Use OpenAIProvider with default endpoint
-```
+When an `Embed` request comes in for model "X":
 
-**Request "gpt-4o"** (explicitly registered):
 ```
-1. Registry check: Found with custom endpoint
-2. → Use OpenAIProvider with custom endpoint (override)
-```
-
-**Request "my-llama"** (custom model):
-```
-1. Registry check: Found with endpoint + adapter_type="vllm"
-2. → Use VLLMProvider with that endpoint
+1. Check embedding provider adapters (auto-discovered)
+   - OpenAI embedding models (if OPENAI_API_KEY set)
+   - HuggingFace models (if HF_EMBEDDING_MODELS set)
+   
+2. Return NOT_FOUND if no match
 ```
 
 ## Visual Architecture
 
 ```
-┌─────────────────────────────────────────────────────┐
-│              Model Service                          │
-├─────────────────────────────────────────────────────┤
-│                                                     │
-│  Resolution Order:                                  │
-│  1. ModelRegistry (explicit)                        │
-│  2. Provider Adapters (auto-discovered)             │
-│                                                     │
-│  ┌─────────────────┐   ┌──────────────────────┐   │
-│  │  ModelRegistry  │   │ Provider Adapters    │   │
-│  │  (Explicit)     │   │ (Auto-discover)      │   │
-│  │                 │   │                      │   │
-│  │ • Custom models │   │ • OpenAIProvider     │   │
-│  │ • Overrides     │   │ • AnthropicProvider  │   │
-│  └─────────────────┘   │ • (Future: VLLM...)  │   │
-│                        └──────────────────────┘   │
-│                                                     │
-│  ┌─────────────────┐                               │
-│  │ PromptRegistry  │                               │
-│  │ (Versioning)    │                               │
-│  └─────────────────┘                               │
-└─────────────────────────────────────────────────────┘
-                      │
-                      ├─→ api.openai.com
-                      ├─→ api.anthropic.com  
-                      └─→ localhost:8000 (custom)
+┌───────────────────────────────────────────────────────────┐
+│                    Model Service                          │
+├───────────────────────────────────────────────────────────┤
+│                                                           │
+│  Chat Providers (ModelProvider ABC):                      │
+│  ┌────────────────────────┐                               │
+│  │ • OpenAIProvider       │ → chat(), chat_stream()       │
+│  │ • AnthropicProvider    │ → chat(), chat_stream()       │
+│  │ • (Future: VLLM...)    │                               │
+│  └────────────────────────┘                               │
+│                                                           │
+│  Embedding Providers (EmbeddingProvider ABC):              │
+│  ┌────────────────────────┐                               │
+│  │ • OpenAIEmbedding      │ → embed() (text-embedding-3)  │
+│  │ • HuggingFaceEmbedding │ → embed() (sentence-transformers) │
+│  └────────────────────────┘                               │
+│                                                           │
+│  ┌─────────────────┐  ┌─────────────────┐                 │
+│  │  ModelRegistry  │  │ PromptRegistry  │                 │
+│  │  (Custom models)│  │ (Versioning)    │                 │
+│  └─────────────────┘  └─────────────────┘                 │
+└───────────────────────────────────────────────────────────┘
+          │                          │
+          │  SDK (ModelClient)       │
+          │  via API Gateway         │
+          │                          │
+          ├─→ api.openai.com         │  (chat + embeddings)
+          ├─→ api.anthropic.com      │  (chat only)
+          ├─→ HuggingFace local      │  (embeddings only)
+          └─→ localhost:8000 (custom)│
 ```
 
-## Discovery (ListModels)
+## Folder Structure
 
-Returns unified list:
-1. Auto-discovered from all provider adapters
-2. Plus explicitly registered models
-3. Explicit registrations override auto-discovered (same name)
-
-Result: Single consistent model list regardless of source.
+```
+services/models/
+├── __init__.py
+├── ARCHITECTURE.md
+├── README.md
+├── main.py                          # gRPC server entry point
+├── models.py                        # Domain dataclasses
+├── service.py                       # gRPC servicer (orchestrator)
+├── store.py                         # ModelRegistry + PromptRegistry
+├── providers/                       # LLM inference
+│   ├── __init__.py
+│   ├── base.py                      # ModelProvider ABC
+│   ├── openai_provider.py
+│   └── anthropic_provider.py
+└── embedding_providers/             # Text-to-vector
+    ├── __init__.py
+    ├── base.py                      # EmbeddingProvider ABC
+    ├── openai_provider.py
+    └── huggingface_provider.py
+```
 
 ## Configuration
 
 ### Environment Variables
 
-**OpenAI:**
+**OpenAI (chat + embeddings):**
 ```bash
 OPENAI_API_KEY=sk-...
-OPENAI_BASE_URL=https://api.openai.com/v1  # Optional
+OPENAI_BASE_URL=https://api.openai.com/v1  # Optional override
 ```
 
-**Anthropic:**
+**Anthropic (chat only):**
 ```bash
 ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-**Auto-discovery:** If key is present, provider initializes and reports its models.
-
-### Registering Custom Models
-
-```python
-platform.models.register_model(
-    models_pb2.RegisterModelRequest(
-        name="my-llama-70b",
-        endpoint="http://localhost:8000/v1",
-        capabilities=models_pb2.ModelCapabilities(
-            context_window=8192,
-            supports_vision=False,
-            supports_tools=True,
-        ),
-        adapter_type="vllm",  # Which adapter: "openai", "anthropic", "vllm"
-        provider="Internal Llama",  # Optional display name
-        health_check="/health",
-    )
-)
+**HuggingFace (embeddings only, optional dependency):**
+```bash
+HF_EMBEDDING_MODELS=all-MiniLM-L6-v2,all-mpnet-base-v2
+# Requires: pip install sentence-transformers
 ```
 
-### Overriding Built-in Models
+**Auto-discovery:** If key/config is present, the corresponding provider initializes and reports its models.
+
+### Using the SDK
 
 ```python
-# Use Azure OpenAI instead of default
+from genai_platform import GenAIPlatform
+
+platform = GenAIPlatform()
+
+# Chat
+response = platform.models.chat(
+    model="gpt-4o",
+    messages=[{"role": "user", "content": "Hello!"}],
+)
+
+# Chat with fallback
+from services.models.models import FallbackConfig
+response = platform.models.chat(
+    model="claude-sonnet-4-5",
+    messages=[{"role": "user", "content": "Hello!"}],
+    fallback_config=FallbackConfig(providers=["gpt-4o"]),
+)
+
+# Embedding
+resp = platform.models.embed(
+    texts=["The quick brown fox", "jumped over the lazy dog"],
+    model="text-embedding-3-small",
+)
+# resp.embeddings -> [[0.1, 0.2, ...], [0.3, 0.4, ...]]
+
+# Register custom model
 platform.models.register_model(
-    models_pb2.RegisterModelRequest(
-        name="gpt-4o",  # Same name = override
-        endpoint="https://my-azure.openai.azure.com/v1",
-        capabilities=...,  # Copy from default or customize
-        adapter_type="openai",
-    )
+    name="my-llama-70b",
+    endpoint="http://localhost:8000/v1",
+    adapter_type="openai",
+    provider="Internal Llama",
 )
 ```
 
 ## Key Design Decisions
 
-### 1. Auto-Discovery from Adapters
+### 1. Separate ABCs for Chat and Embedding
 
-**Why:** Zero configuration for 99% of users.
+**Why:** They are fundamentally different capabilities with different provider landscapes. A combined ABC forces broken stubs on providers that only support one capability.
 
-Provider adapters know which models they support. No need to register "gpt-4o" manually - it's automatically available when `OPENAI_API_KEY` is set.
+### 2. Separate Folders (`providers/` vs `embedding_providers/`)
 
-### 2. Explicit Registration for Custom Only
+**Why:** Clean naming (both have `base.py`, `openai_provider.py`), independent growth, mirrors the two registries in `service.py`.
 
-**Why:** Minimal boilerplate while supporting customization.
+### 3. Auto-Discovery from Adapters
 
-Only register when you need to:
-- Add a custom model
-- Override a default endpoint
+**Why:** Zero configuration for 99% of users. Provider adapters know which models they support.
 
-### 3. Registry Overrides Auto-Discovered
+### 4. Registry Overrides Auto-Discovered
 
-**Why:** Power users can customize without breaking defaults.
+**Why:** Power users can customize without breaking defaults. Resolution checks registry first.
 
-Resolution checks registry first, so you can override any auto-discovered model by registering with the same name.
+### 5. Client-Side Fallback
 
-### 4. Single Resolution Path
+**Why:** Resilience against provider outages. The SDK's `ModelClient` handles fallback chains transparently — if the primary model fails, it tries the next provider in the chain.
 
-**Why:** Simple to understand and debug.
+### 6. HuggingFace as Optional Dependency
 
-Both built-in and custom models go through the same resolution logic. The only difference is where the model info comes from (adapter vs registry).
-
-### 5. Adapter Type Field
-
-**Why:** Future-proof for multiple self-hosted options.
-
-Custom models specify which adapter to use:
-- `"openai"` - OpenAI-compatible APIs (vLLM, Text Generation Inference, etc.)
-- `"vllm"` - Dedicated vLLM adapter (future)
-- `"anthropic"` - Anthropic-compatible APIs (future)
-
-## Comparison: Before vs After
-
-### Before (Confusing)
-```
-ProviderRegistry = commercial models
-ModelRegistry = custom models
-→ Two separate systems, unclear why
-```
-
-### After (Clean)
-```
-Provider Adapters = HOW to talk (OpenAI format, Anthropic format)
-ModelRegistry = Explicit registrations (custom + overrides)
-
-Resolution = Check registry first, then adapters
-```
+**Why:** `sentence-transformers` pulls ~2GB of PyTorch. Making it optional keeps the base install lightweight while allowing local embedding when needed.
 
 ## Adding New Providers
 
-### Commercial Provider (Auto-Discovered)
+### New Chat Provider
 
 1. Create adapter in `providers/`:
 ```python
 class GoogleProvider(ModelProvider):
     def get_supported_models(self):
-        return [
-            ModelInfo(name="gemini-pro", ...),
-            ModelInfo(name="gemini-ultra", ...),
-        ]
-    # ... implement chat, chat_stream
+        return [ModelInfo(name="gemini-pro", ...)]
+    def chat(...) -> ChatResponse: ...
+    def chat_stream(...) -> Iterator[ChatChunk]: ...
 ```
 
 2. Register in `ModelService._initialize_providers()`:
@@ -275,42 +343,36 @@ if google_key:
     self._providers["google"] = GoogleProvider(api_key=google_key)
 ```
 
-Done! Models auto-discovered when key is present.
+### New Embedding Provider
 
-### Custom Provider (User-Registered)
+1. Create adapter in `embedding_providers/`:
+```python
+class CohereEmbeddingProvider(EmbeddingProvider):
+    def get_supported_embedding_models(self):
+        return [ModelInfo(name="embed-english-v3.0", ...)]
+    def embed(texts, model) -> EmbeddingResponse: ...
+```
 
-User registers via RPC - no code changes needed.
+2. Register in `ModelService._initialize_embedding_providers()`:
+```python
+cohere_key = os.getenv("COHERE_API_KEY")
+if cohere_key:
+    self._embedding_providers["cohere"] = CohereEmbeddingProvider(api_key=cohere_key)
+```
 
 ## Testing
 
 ```bash
-# Quick test (auto-starts services)
-python examples/quickstart_models.py
+# Run all Model Service tests
+python -m pytest tests/test_model_*.py -v
 
-# Comprehensive test
-python examples/test_model_service.py
+# Quick integration test (auto-starts services)
+python examples/quickstart_models.py
 ```
 
 ## Future Enhancements
 
-1. **Custom Model Inference**: Currently registered but not routable for inference. Need to support calling custom endpoints.
-
+1. **Custom Model Inference**: Route inference requests to registered custom endpoints.
 2. **Health Checking**: Implement actual health checks for registered models.
-
-3. **Fallback Chains**: Chapter 3 fallback logic.
-
-4. **Response Caching**: Chapter 3 caching strategies.
-
-5. **vLLM Provider**: Dedicated adapter for vLLM-specific features.
-
-## Summary
-
-**Simple principle:**
-- Provider adapters auto-discover built-in models (zero config)
-- Users register custom models (explicit when needed)
-- Single resolution path for both
-
-**Result:**
-- Zero config for common case
-- Flexible when needed
-- Easy to understand and debug
+3. **Response Caching**: Chapter 3 caching strategies via `CacheConfig`.
+4. **vLLM Provider**: Dedicated adapter for vLLM-specific features.
