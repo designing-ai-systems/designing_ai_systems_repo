@@ -117,12 +117,8 @@ class TestRegisterMcpServer:
             server_url="https://mcp.github.example/mcp",
             namespace="devtools.github",
         )
-        request.policy_overrides.CopyFrom(
-            tools_pb2.ToolBehavior(requires_confirmation=True)
-        )
-        request.rate_limit_overrides.CopyFrom(
-            tools_pb2.RateLimits(requests_per_minute=30)
-        )
+        request.policy_overrides.CopyFrom(tools_pb2.ToolBehavior(requires_confirmation=True))
+        request.rate_limit_overrides.CopyFrom(tools_pb2.RateLimits(requests_per_minute=30))
 
         await svc.RegisterMcpServer(request, FakeContext())
 

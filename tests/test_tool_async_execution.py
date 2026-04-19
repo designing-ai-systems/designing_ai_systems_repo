@@ -28,17 +28,13 @@ def _mock_client(handler):
 async def _register_tool(svc, *, name, endpoint, timeout_seconds=0):
     tool = tools_pb2.ToolDefinition(name=name, description=name, endpoint=endpoint)
     if timeout_seconds:
-        tool.execution_limits.CopyFrom(
-            tools_pb2.ExecutionLimits(timeout_seconds=timeout_seconds)
-        )
+        tool.execution_limits.CopyFrom(tools_pb2.ExecutionLimits(timeout_seconds=timeout_seconds))
     await svc.RegisterTool(tools_pb2.RegisterToolRequest(tool=tool), FakeContext())
 
 
 async def _wait_until_done(svc, task_id, attempts=50):
     for _ in range(attempts):
-        resp = await svc.GetTask(
-            tools_pb2.GetTaskRequest(task_id=task_id), FakeContext()
-        )
+        resp = await svc.GetTask(tools_pb2.GetTaskRequest(task_id=task_id), FakeContext())
         if resp.status not in ("pending", "running"):
             return resp
         await asyncio.sleep(0.01)
@@ -117,9 +113,7 @@ class TestGetTask:
     async def test_unknown_task_id_returns_not_found(self):
         svc = ToolServiceImpl()
         ctx = FakeContext()
-        resp = await svc.GetTask(
-            tools_pb2.GetTaskRequest(task_id="does-not-exist"), ctx
-        )
+        resp = await svc.GetTask(tools_pb2.GetTaskRequest(task_id="does-not-exist"), ctx)
         import grpc as _grpc
 
         assert ctx.code == _grpc.StatusCode.NOT_FOUND

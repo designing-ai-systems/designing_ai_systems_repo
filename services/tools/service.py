@@ -377,13 +377,9 @@ class ToolServiceImpl(tools_pb2_grpc.ToolServiceServicer, BaseAioServicer):
         credential: Optional[Credential] = None
         if tool.credential_ref:
             try:
-                credential = await self.credential_store.retrieve(
-                    tool.credential_ref, tool.name
-                )
+                credential = await self.credential_store.retrieve(tool.credential_ref, tool.name)
             except (KeyError, PermissionError) as e:
-                task.result = ToolExecutionResult(
-                    tool_name=tool.name, success=False, error=str(e)
-                )
+                task.result = ToolExecutionResult(tool_name=tool.name, success=False, error=str(e))
                 task.status = "failed"
                 return
 
@@ -499,10 +495,7 @@ class ToolServiceImpl(tools_pb2_grpc.ToolServiceServicer, BaseAioServicer):
 
         return ToolExecutionResult(tool_name=tool.name, success=True, result=result)
 
-
-    async def _execute_via_mcp(
-        self, tool: ToolDefinition, args: dict
-    ) -> ToolExecutionResult:
+    async def _execute_via_mcp(self, tool: ToolDefinition, args: dict) -> ToolExecutionResult:
         """Route execution through the MCP client that owns this tool (Listing 6.18)."""
         client = self._mcp_clients.get(tool.mcp_server_url)
         if client is None:

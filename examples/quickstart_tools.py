@@ -83,17 +83,21 @@ def start_mock_scheduling_api():
             args = json.loads(raw) if raw else {}
             api_key_present = bool(self.headers.get("X-API-Key"))
             if self.path.endswith("/bookings"):
-                self._respond({
-                    "appointment_id": f"apt-{int(time.time())}",
-                    "status": "booked",
-                    "args_received": args,
-                    "auth_header_present": api_key_present,
-                })
+                self._respond(
+                    {
+                        "appointment_id": f"apt-{int(time.time())}",
+                        "status": "booked",
+                        "args_received": args,
+                        "auth_header_present": api_key_present,
+                    }
+                )
             elif self.path.endswith("/availability"):
-                self._respond({
-                    "slots": ["2026-04-22T10:00", "2026-04-22T14:00"],
-                    "args_received": args,
-                })
+                self._respond(
+                    {
+                        "slots": ["2026-04-22T10:00", "2026-04-22T14:00"],
+                        "args_received": args,
+                    }
+                )
             else:
                 self._respond({"error": "unknown path", "path": self.path})
 
