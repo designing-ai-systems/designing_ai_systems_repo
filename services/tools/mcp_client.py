@@ -36,45 +36,52 @@ class MCPClient(Protocol):
 class StreamableHttpMCPClient:
     """Real MCPClient over streamable HTTP.
 
-    Holds the transport and session open across calls via an AsyncExitStack,
-    so subsequent list_tools / call_tool reuse the same initialized session.
+    Each list_tools / call_tool opens a fresh session, runs the RPC, and
+    closes cleanly — simpler than pinning one long-lived session across
+    multiple asyncio tasks (which anyio's task-group cancel scopes reject).
+    The per-call init cost is a single POST and acceptable for a book demo;
+    production would add connection pooling if it mattered.
     """
 
-    def __init__(self) -> None:
-        self._stack: Optional[AsyncExitStack] = None
-        self._session: Optional[ClientSession] = None
-
-    async def connect(self, server_url: str, auth_token: str = "") -> None:
-        self._stack = AsyncExitStack()
-        headers: Optional[dict[str, str]] = (
+    def __init__(self, server_url: str, auth_token: str = "") -> None:
+        self._server_url = server_url
+        self._headers: Optional[dict[str, str]] = (
             {"Authorization": f"Bearer {auth_token}"} if auth_token else None
         )
-        streams = await self._stack.enter_async_context(
-            streamablehttp_client(server_url, headers=headers)
+
+    async def _open(self, stack: AsyncExitStack) -> ClientSession:
+        streams = await stack.enter_async_context(
+            streamablehttp_client(self._server_url, headers=self._headers)
         )
         read, write, _ = streams
-        self._session = await self._stack.enter_async_context(ClientSession(read, write))
-        await self._session.initialize()
+        session = await stack.enter_async_context(ClientSession(read, write))
+        await session.initialize()
+        return session
 
     async def list_tools(self) -> list[types.Tool]:
-        assert self._session is not None, "call connect() first"
-        return (await self._session.list_tools()).tools
+        async with AsyncExitStack() as stack:
+            session = await self._open(stack)
+            return (await session.list_tools()).tools
 
     async def call_tool(self, name: str, args: dict) -> types.CallToolResult:
-        assert self._session is not None, "call connect() first"
-        return await self._session.call_tool(name, args)
+        async with AsyncExitStack() as stack:
+            session = await self._open(stack)
+            return await session.call_tool(name, args)
 
     async def close(self) -> None:
-        if self._stack is not None:
-            await self._stack.aclose()
-            self._stack = None
-            self._session = None
+        # No persistent state to release.
+        return None
 
 
 async def connect_streamable_http(server_url: str, auth_token: str = "") -> MCPClient:
-    """Default connector used by ToolServiceImpl when no override is supplied."""
-    client = StreamableHttpMCPClient()
-    await client.connect(server_url, auth_token)
+    """Default connector used by ToolServiceImpl when no override is supplied.
+
+    Performs one handshake to surface DNS/TLS errors eagerly (tests rely on
+    register-time failures to report UNAVAILABLE).
+    """
+    client = StreamableHttpMCPClient(server_url, auth_token)
+    # Eager health-check: a successful list_tools() proves reachability and auth.
+    await client.list_tools()
     return client
 
 

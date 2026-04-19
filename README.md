@@ -101,7 +101,11 @@ python examples/quickstart_conversation.py
 
 **Tools & Guardrails (Chapter 6):**
 ```bash
-python examples/quickstart_tools.py
+python examples/quickstart_tools.py               # full platform end-to-end (+ model loop if OPENAI_API_KEY set)
+python examples/test_tool_service.py              # tool service: register / discover / HTTP exec + credential injection / async / circuit breaker
+python examples/test_tool_service.py --mcp        # same, plus a live MCP call to https://mcp.deepwiki.com/mcp
+python examples/test_guardrails_service.py        # guardrails: input validation, output filtering, policy check, violation reporting
+python examples/quickstart_mcp.py                 # platform registers DeepWiki (public MCP server) and runs real MCP calls
 ```
 
 **Run services separately** (optional):
