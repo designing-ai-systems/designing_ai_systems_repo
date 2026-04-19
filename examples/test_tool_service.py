@@ -194,9 +194,8 @@ def test_discovery(platform):
     tools = platform.tools.discover()
     print(f"  All tools: {len(tools)}")
     for t in tools:
-        print(
-            f"    - {t.name}  [caps={t.capabilities}  ro={bool(t.behavior and t.behavior.is_read_only)}]"
-        )
+        ro = bool(t.behavior and t.behavior.is_read_only)
+        print(f"    - {t.name}  [caps={t.capabilities}  ro={ro}]")
 
     scheduling = platform.tools.discover(namespace="healthcare.scheduling.*")
     print(f"\n  discover(namespace='healthcare.scheduling.*') -> {len(scheduling)}")
