@@ -11,12 +11,15 @@ syntax = "proto3";
 
 package tools;
 
-// Listing 6.1
+// Listing 6.1 (plus Listing 6.16 async pair)
 service ToolService {
     rpc RegisterTool(RegisterToolRequest) returns (RegisterToolResponse);
     rpc DiscoverTools(DiscoverToolsRequest) returns (DiscoverToolsResponse);
     rpc ExecuteTool(ExecuteToolRequest) returns (ExecuteToolResponse);
     rpc ValidateTool(ValidateToolRequest) returns (ValidateToolResponse);
+    // Listing 6.16: long-running tools start here, callers poll GetTask.
+    rpc ExecuteToolAsync(ExecuteToolRequest) returns (ExecuteToolAsyncResponse);
+    rpc GetTask(GetTaskRequest) returns (GetTaskResponse);
 }
 
 // Listing 6.2: Tool definition with identity and schema
@@ -119,4 +122,22 @@ message ValidateToolRequest {
 message ValidateToolResponse {
     bool valid = 1;
     repeated string errors = 2;
+}
+
+// --- Async execution (Listing 6.16) ---
+
+message ExecuteToolAsyncResponse {
+    string task_id = 1;
+    string status = 2;  // "pending"
+}
+
+message GetTaskRequest {
+    string task_id = 1;
+}
+
+message GetTaskResponse {
+    string task_id = 1;
+    string status = 2;  // "pending" | "running" | "succeeded" | "failed" | "timed_out"
+    string result_json = 3;
+    string error = 4;
 }

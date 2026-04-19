@@ -178,6 +178,38 @@ class ToolClient(BaseClient):
             execution_time_ms=response.execution_time_ms,
         )
 
+    # --- Async execution (Listing 6.16) ---
+
+    def execute_async(
+        self,
+        tool_name: str,
+        arguments: Optional[Dict[str, Any]] = None,
+        session_id: str = "",
+    ) -> Dict[str, str]:
+        """Start a tool execution in the background; returns ``{"task_id", "status"}``.
+
+        Poll :meth:`get_task` to observe state transitions
+        (pending → running → succeeded | failed | timed_out).
+        """
+        request = tools_pb2.ExecuteToolRequest(
+            tool_name=tool_name,
+            arguments_json=json.dumps(arguments) if arguments else "{}",
+            session_id=session_id,
+        )
+        response = self._stub.ExecuteToolAsync(request, metadata=self.metadata)
+        return {"task_id": response.task_id, "status": response.status}
+
+    def get_task(self, task_id: str) -> Dict[str, Any]:
+        """Return the current state of an async task started by :meth:`execute_async`."""
+        request = tools_pb2.GetTaskRequest(task_id=task_id)
+        response = self._stub.GetTask(request, metadata=self.metadata)
+        return {
+            "task_id": response.task_id,
+            "status": response.status,
+            "result": json.loads(response.result_json) if response.result_json else None,
+            "error": response.error or None,
+        }
+
     # --- Validation ---
 
     def validate(

@@ -394,6 +394,25 @@ def main():
     if payload.get("auth_header_present"):
         print("  Credential injection (Listing 6.14): yes — mock API saw X-API-Key on the request")
 
+    # Async variant (Listing 6.16): start in background, poll get_task.
+    started = platform.tools.execute_async(
+        tool_name="healthcare.scheduling.book_appointment",
+        arguments={
+            "patient_id": "patient-123",
+            "provider_id": "dr-smith",
+            "datetime": "2026-04-16T14:00:00Z",
+        },
+    )
+    print(f"  Async started: task_id={started['task_id']} status={started['status']}")
+    for _ in range(30):
+        task = platform.tools.get_task(started["task_id"])
+        if task["status"] not in ("pending", "running"):
+            break
+        time.sleep(0.05)
+    print(f"  Async final status: {task['status']}")
+    if task["result"]:
+        print(f"  Async result: {task['result']}")
+
     # ========================================================
     # 4. Tool Validation
     # ========================================================

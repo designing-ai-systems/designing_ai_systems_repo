@@ -26,7 +26,7 @@ if _version_not_supported:
 
 
 class ToolServiceStub(object):
-    """Listing 6.1
+    """Listing 6.1 (plus Listing 6.16 async pair)
     """
 
     def __init__(self, channel):
@@ -55,10 +55,20 @@ class ToolServiceStub(object):
                 request_serializer=tools__pb2.ValidateToolRequest.SerializeToString,
                 response_deserializer=tools__pb2.ValidateToolResponse.FromString,
                 _registered_method=True)
+        self.ExecuteToolAsync = channel.unary_unary(
+                '/tools.ToolService/ExecuteToolAsync',
+                request_serializer=tools__pb2.ExecuteToolRequest.SerializeToString,
+                response_deserializer=tools__pb2.ExecuteToolAsyncResponse.FromString,
+                _registered_method=True)
+        self.GetTask = channel.unary_unary(
+                '/tools.ToolService/GetTask',
+                request_serializer=tools__pb2.GetTaskRequest.SerializeToString,
+                response_deserializer=tools__pb2.GetTaskResponse.FromString,
+                _registered_method=True)
 
 
 class ToolServiceServicer(object):
-    """Listing 6.1
+    """Listing 6.1 (plus Listing 6.16 async pair)
     """
 
     def RegisterTool(self, request, context):
@@ -80,6 +90,19 @@ class ToolServiceServicer(object):
         raise NotImplementedError('Method not implemented!')
 
     def ValidateTool(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ExecuteToolAsync(self, request, context):
+        """Listing 6.16: long-running tools start here, callers poll GetTask.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetTask(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -108,6 +131,16 @@ def add_ToolServiceServicer_to_server(servicer, server):
                     request_deserializer=tools__pb2.ValidateToolRequest.FromString,
                     response_serializer=tools__pb2.ValidateToolResponse.SerializeToString,
             ),
+            'ExecuteToolAsync': grpc.unary_unary_rpc_method_handler(
+                    servicer.ExecuteToolAsync,
+                    request_deserializer=tools__pb2.ExecuteToolRequest.FromString,
+                    response_serializer=tools__pb2.ExecuteToolAsyncResponse.SerializeToString,
+            ),
+            'GetTask': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetTask,
+                    request_deserializer=tools__pb2.GetTaskRequest.FromString,
+                    response_serializer=tools__pb2.GetTaskResponse.SerializeToString,
+            ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
             'tools.ToolService', rpc_method_handlers)
@@ -117,7 +150,7 @@ def add_ToolServiceServicer_to_server(servicer, server):
 
  # This class is part of an EXPERIMENTAL API.
 class ToolService(object):
-    """Listing 6.1
+    """Listing 6.1 (plus Listing 6.16 async pair)
     """
 
     @staticmethod
@@ -218,6 +251,60 @@ class ToolService(object):
             '/tools.ToolService/ValidateTool',
             tools__pb2.ValidateToolRequest.SerializeToString,
             tools__pb2.ValidateToolResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ExecuteToolAsync(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/tools.ToolService/ExecuteToolAsync',
+            tools__pb2.ExecuteToolRequest.SerializeToString,
+            tools__pb2.ExecuteToolAsyncResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetTask(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/tools.ToolService/GetTask',
+            tools__pb2.GetTaskRequest.SerializeToString,
+            tools__pb2.GetTaskResponse.FromString,
             options,
             channel_credentials,
             insecure,

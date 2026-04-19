@@ -16,10 +16,12 @@ Book: "Designing AI Systems" (https://www.manning.com/books/designing-ai-systems
   - Listing 6.18: CircuitBreaker integration
 """
 
+import asyncio
 import json
 import logging
 import time
-from typing import Optional
+import uuid
+from typing import Dict, Optional
 
 import grpc
 import grpc.aio
@@ -36,6 +38,7 @@ from services.tools.models import (
     ToolBehavior,
     ToolDefinition,
     ToolExecutionResult,
+    ToolTask,
 )
 from services.tools.store import InMemoryToolRegistry, ToolRegistry
 
@@ -57,6 +60,9 @@ class ToolServiceImpl(tools_pb2_grpc.ToolServiceServicer, BaseAioServicer):
         self.credential_store = credential_store or InMemoryCredentialStore()
         self.circuit_breaker = circuit_breaker or CircuitBreaker()
         self._http_client = http_client or httpx.AsyncClient()
+        # Listing 6.16: async tasks. In-memory dict is adequate for a book
+        # demo; production should swap for Redis/Celery/equivalent.
+        self._tasks: Dict[str, ToolTask] = {}
 
     def add_to_aio_server(self, server: grpc.aio.Server) -> None:
         tools_pb2_grpc.add_ToolServiceServicer_to_server(self, server)
@@ -241,6 +247,70 @@ class ToolServiceImpl(tools_pb2_grpc.ToolServiceServicer, BaseAioServicer):
             context.set_code(grpc.StatusCode.INTERNAL)
             context.set_details(str(e))
             return tools_pb2.ExecuteToolResponse(success=False, error=str(e))
+
+    async def ExecuteToolAsync(self, request, context):
+        """Listing 6.16 Option 1: returns a task_id immediately; callers poll GetTask."""
+        tool_name = request.tool_name
+        tool = self.registry.get(tool_name)
+        if not tool:
+            context.set_code(grpc.StatusCode.NOT_FOUND)
+            context.set_details(f"Tool '{tool_name}' not found")
+            return tools_pb2.ExecuteToolAsyncResponse()
+
+        args = json.loads(request.arguments_json) if request.arguments_json else {}
+        task_id = uuid.uuid4().hex
+        task = ToolTask(id=task_id, status="pending", tool_name=tool_name, arguments=args)
+        self._tasks[task_id] = task
+        asyncio.create_task(self._run_async(task, tool))
+        return tools_pb2.ExecuteToolAsyncResponse(task_id=task_id, status="pending")
+
+    async def GetTask(self, request, context):
+        task = self._tasks.get(request.task_id)
+        if not task:
+            context.set_code(grpc.StatusCode.NOT_FOUND)
+            context.set_details(f"Task '{request.task_id}' not found")
+            return tools_pb2.GetTaskResponse()
+
+        result_json = ""
+        error = ""
+        if task.result:
+            if task.result.result is not None:
+                result_json = json.dumps(task.result.result)
+            if task.result.error:
+                error = task.result.error
+
+        return tools_pb2.GetTaskResponse(
+            task_id=task.id,
+            status=task.status,
+            result_json=result_json,
+            error=error,
+        )
+
+    async def _run_async(self, task: ToolTask, tool: ToolDefinition) -> None:
+        """Background coroutine that drives a single async task to completion."""
+        task.status = "running"
+        credential: Optional[Credential] = None
+        if tool.credential_ref:
+            try:
+                credential = await self.credential_store.retrieve(
+                    tool.credential_ref, tool.name
+                )
+            except (KeyError, PermissionError) as e:
+                task.result = ToolExecutionResult(
+                    tool_name=tool.name, success=False, error=str(e)
+                )
+                task.status = "failed"
+                return
+
+        result = await self._execute_sandboxed(tool, task.arguments or {}, credential)
+        self.circuit_breaker.record_result(tool.name, result.success)
+        task.result = result
+        if result.success:
+            task.status = "succeeded"
+        elif result.error and "timeout" in result.error.lower():
+            task.status = "timed_out"
+        else:
+            task.status = "failed"
 
     async def ValidateTool(self, request, context):
         try:
