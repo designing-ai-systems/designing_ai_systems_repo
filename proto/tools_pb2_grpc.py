@@ -65,6 +65,11 @@ class ToolServiceStub(object):
                 request_serializer=tools__pb2.GetTaskRequest.SerializeToString,
                 response_deserializer=tools__pb2.GetTaskResponse.FromString,
                 _registered_method=True)
+        self.RegisterMcpServer = channel.unary_unary(
+                '/tools.ToolService/RegisterMcpServer',
+                request_serializer=tools__pb2.RegisterMcpServerRequest.SerializeToString,
+                response_deserializer=tools__pb2.RegisterMcpServerResponse.FromString,
+                _registered_method=True)
 
 
 class ToolServiceServicer(object):
@@ -108,6 +113,14 @@ class ToolServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def RegisterMcpServer(self, request, context):
+        """Listing 6.18: register an external MCP server; its tools get imported
+        into the registry under the caller's namespace.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_ToolServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -140,6 +153,11 @@ def add_ToolServiceServicer_to_server(servicer, server):
                     servicer.GetTask,
                     request_deserializer=tools__pb2.GetTaskRequest.FromString,
                     response_serializer=tools__pb2.GetTaskResponse.SerializeToString,
+            ),
+            'RegisterMcpServer': grpc.unary_unary_rpc_method_handler(
+                    servicer.RegisterMcpServer,
+                    request_deserializer=tools__pb2.RegisterMcpServerRequest.FromString,
+                    response_serializer=tools__pb2.RegisterMcpServerResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -305,6 +323,33 @@ class ToolService(object):
             '/tools.ToolService/GetTask',
             tools__pb2.GetTaskRequest.SerializeToString,
             tools__pb2.GetTaskResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def RegisterMcpServer(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/tools.ToolService/RegisterMcpServer',
+            tools__pb2.RegisterMcpServerRequest.SerializeToString,
+            tools__pb2.RegisterMcpServerResponse.FromString,
             options,
             channel_credentials,
             insecure,

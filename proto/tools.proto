@@ -20,6 +20,9 @@ service ToolService {
     // Listing 6.16: long-running tools start here, callers poll GetTask.
     rpc ExecuteToolAsync(ExecuteToolRequest) returns (ExecuteToolAsyncResponse);
     rpc GetTask(GetTaskRequest) returns (GetTaskResponse);
+    // Listing 6.18: register an external MCP server; its tools get imported
+    // into the registry under the caller's namespace.
+    rpc RegisterMcpServer(RegisterMcpServerRequest) returns (RegisterMcpServerResponse);
 }
 
 // Listing 6.2: Tool definition with identity and schema
@@ -39,6 +42,9 @@ message ToolDefinition {
     string endpoint = 13;
     string credential_ref = 14;
     ExecutionLimits execution_limits = 15;
+    // Listing 6.18: if set, ExecuteTool routes the call through the MCP
+    // client wired to this server instead of the HTTP endpoint.
+    string mcp_server_url = 16;
 }
 
 // Listing 6.3: Operational metadata
@@ -140,4 +146,18 @@ message GetTaskResponse {
     string status = 2;  // "pending" | "running" | "succeeded" | "failed" | "timed_out"
     string result_json = 3;
     string error = 4;
+}
+
+// --- MCP registration (Listing 6.18) ---
+
+message RegisterMcpServerRequest {
+    string server_url = 1;
+    string namespace = 2;
+    string credential_ref = 3;              // used to auth to the MCP server itself
+    ToolBehavior policy_overrides = 4;      // applied to every imported tool
+    RateLimits rate_limit_overrides = 5;
+}
+
+message RegisterMcpServerResponse {
+    repeated string imported_tool_names = 1;
 }
