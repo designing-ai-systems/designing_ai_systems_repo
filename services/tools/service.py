@@ -23,6 +23,7 @@ from typing import Optional
 
 import grpc
 import grpc.aio
+import httpx
 
 from proto import tools_pb2, tools_pb2_grpc
 from services.shared.servicer_base import BaseAioServicer
@@ -40,6 +41,9 @@ from services.tools.store import InMemoryToolRegistry, ToolRegistry
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_TIMEOUT_SECONDS = 30
+DEFAULT_MAX_RESPONSE_SIZE_KB = 1024
+
 
 class ToolServiceImpl(tools_pb2_grpc.ToolServiceServicer, BaseAioServicer):
     def __init__(
@@ -47,10 +51,12 @@ class ToolServiceImpl(tools_pb2_grpc.ToolServiceServicer, BaseAioServicer):
         registry: ToolRegistry | None = None,
         credential_store: CredentialStore | None = None,
         circuit_breaker: CircuitBreaker | None = None,
+        http_client: httpx.AsyncClient | None = None,
     ):
         self.registry = registry or InMemoryToolRegistry()
         self.credential_store = credential_store or InMemoryCredentialStore()
         self.circuit_breaker = circuit_breaker or CircuitBreaker()
+        self._http_client = http_client or httpx.AsyncClient()
 
     def add_to_aio_server(self, server: grpc.aio.Server) -> None:
         tools_pb2_grpc.add_ToolServiceServicer_to_server(self, server)
@@ -265,23 +271,84 @@ class ToolServiceImpl(tools_pb2_grpc.ToolServiceServicer, BaseAioServicer):
         credential: Optional[Credential],
     ) -> ToolExecutionResult:
         """
-        Sandboxed tool execution stub (Listing 6.12).
+        Execute a tool by POSTing args to its endpoint (Listing 6.12).
 
-        ``credential`` is populated when the tool declares credential_ref
-        (Listing 6.13); production adapters inject it into outbound HTTP.
+        Injects ``credential`` as an auth header based on ``credential_type``
+        (Listing 6.13–6.14). Enforces per-tool ``timeout_seconds`` and
+        ``max_response_size_kb`` from ExecutionLimits (Listing 6.17);
+        memory / cpu / retries are container-level concerns left to the
+        deployment.
         """
+        if not tool.endpoint:
+            return ToolExecutionResult(
+                tool_name=tool.name,
+                success=False,
+                error=f"Tool '{tool.name}' has no endpoint configured",
+            )
+
+        headers = _auth_headers(credential)
+        limits = tool.execution_limits or ExecutionLimits()
+        timeout = limits.timeout_seconds or DEFAULT_TIMEOUT_SECONDS
+        max_bytes = (limits.max_response_size_kb or DEFAULT_MAX_RESPONSE_SIZE_KB) * 1024
+
         logger.info(
-            "Executing tool %s with args %s (credential=%s)",
+            "Executing tool %s POST %s (credential=%s, timeout=%ds)",
             tool.name,
-            args,
+            tool.endpoint,
             credential.name if credential else None,
+            timeout,
         )
-        payload = {"status": "executed", "tool": tool.name, "args": args}
-        if credential is not None:
-            payload["credential_injected"] = True
-            payload["credential_type"] = credential.credential_type
-        return ToolExecutionResult(
-            tool_name=tool.name,
-            success=True,
-            result=payload,
-        )
+
+        try:
+            response = await self._http_client.post(
+                tool.endpoint,
+                json=args,
+                headers=headers,
+                timeout=timeout,
+            )
+        except httpx.TimeoutException as e:
+            return ToolExecutionResult(
+                tool_name=tool.name, success=False, error=f"timeout after {timeout}s: {e}"
+            )
+        except httpx.RequestError as e:
+            return ToolExecutionResult(
+                tool_name=tool.name, success=False, error=f"request failed: {e}"
+            )
+
+        body = response.content
+        if len(body) > max_bytes:
+            return ToolExecutionResult(
+                tool_name=tool.name,
+                success=False,
+                error=f"response exceeds max_response_size_kb ({len(body)} > {max_bytes} bytes)",
+            )
+
+        if response.status_code >= 400:
+            snippet = body.decode("utf-8", errors="replace")[:500]
+            return ToolExecutionResult(
+                tool_name=tool.name,
+                success=False,
+                error=f"HTTP {response.status_code}: {snippet}",
+            )
+
+        try:
+            result = response.json()
+        except json.JSONDecodeError:
+            result = {"raw": body.decode("utf-8", errors="replace")}
+
+        return ToolExecutionResult(tool_name=tool.name, success=True, result=result)
+
+
+def _auth_headers(credential: Optional[Credential]) -> dict:
+    """Map credential_type → outbound auth header (Listing 6.14)."""
+    if credential is None:
+        return {}
+    ctype = credential.credential_type
+    if ctype == "api_key":
+        return {"X-API-Key": credential.value}
+    if ctype in ("bearer", "oauth2"):
+        return {"Authorization": f"Bearer {credential.value}"}
+    if ctype == "basic":
+        return {"Authorization": f"Basic {credential.value}"}
+    logger.warning("Unknown credential_type %r; passing as X-Credential header", ctype)
+    return {"X-Credential": credential.value}

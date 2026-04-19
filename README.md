@@ -394,7 +394,7 @@ pytest tests/ -v
 - **Model Service** (Chapter 3): OpenAI, Anthropic, streaming, prompt management, custom models, client-side fallback
 - **Session Service** (Chapter 4): Messages, pagination, model-managed memory, PostgreSQL
 - **Data Service** (Chapter 5): Document ingestion, chunking, vector/hybrid search, pgvector, dynamic parser registration
-- **Tool Service** (Chapter 6): Registration, discovery (namespace/capability/tags), versioning, sandboxed execution, circuit breaker, credential store
+- **Tool Service** (Chapter 6): Registration, discovery (namespace/capability/tags), versioning, HTTP execution with credential injection (api_key / bearer / oauth2 / basic) and per-tool timeout + response-size limits, circuit breaker, credential store
 - **Guardrails Service** (Chapter 6): Input validation (prompt injection, PII), output filtering (PII redaction), policy enforcement, violation reporting
 - **API Gateway**: gRPC proxy with service discovery (sessions, models, data, tools, guardrails); sync client to backends (tools/guardrails use grpc.aio servers, compatible at the wire level)
 - Observability & Experimentation (Chapter 7): planned -- traces, spans, structured logging, experimentation

@@ -38,6 +38,7 @@ import os
 import sys
 import threading
 import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -57,6 +58,51 @@ from services.tools.service import ToolServiceImpl
 # Platform tool used in §8; model-facing name derived via
 # platform_tool_name_to_llm_function_name.
 DEMO_PLATFORM_TOOL = "healthcare.scheduling.check_availability"
+
+MOCK_API_PORT = 8765
+MOCK_API_BASE = f"http://127.0.0.1:{MOCK_API_PORT}"
+
+
+def start_mock_scheduling_api():
+    """Local HTTP server so the quickstart's ExecuteTool demo makes a real
+    round-trip (not a placeholder URL). Echoes args and reports whether the
+    Tool Service attached the X-API-Key header (Listing 6.14)."""
+
+    class Handler(BaseHTTPRequestHandler):
+        def _respond(self, payload):
+            body = json.dumps(payload).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_POST(self):  # noqa: N802
+            length = int(self.headers.get("Content-Length", 0))
+            raw = self.rfile.read(length).decode() if length else ""
+            args = json.loads(raw) if raw else {}
+            api_key_present = bool(self.headers.get("X-API-Key"))
+            if self.path.endswith("/bookings"):
+                self._respond({
+                    "appointment_id": f"apt-{int(time.time())}",
+                    "status": "booked",
+                    "args_received": args,
+                    "auth_header_present": api_key_present,
+                })
+            elif self.path.endswith("/availability"):
+                self._respond({
+                    "slots": ["2026-04-22T10:00", "2026-04-22T14:00"],
+                    "args_received": args,
+                })
+            else:
+                self._respond({"error": "unknown path", "path": self.path})
+
+        def log_message(self, *_args, **_kwargs):
+            pass  # silence per-request logs
+
+    ThreadingHTTPServer.allow_reuse_address = True
+    server = ThreadingHTTPServer(("127.0.0.1", MOCK_API_PORT), Handler)
+    server.serve_forever()
 
 
 def demo_model_service_with_tools(platform: GenAIPlatform) -> None:
@@ -223,6 +269,7 @@ def main():
 
     # --- Start services ---
     print("\nStarting services...")
+    start_service_in_thread(start_mock_scheduling_api, "MockSchedulingAPI")
     start_service_in_thread(start_tools_with_seeded_credentials, "ToolService")
     start_service_in_thread(start_guardrails_with_booking_policy, "GuardrailsService")
     start_service_in_thread(start_model_service, "ModelService")
@@ -264,7 +311,7 @@ def main():
         cost=CostMetadata(estimated_cost_usd=0.05, billing_category="scheduling"),
         capabilities=["scheduling", "booking"],
         tags=["patient-facing", "hipaa-compliant"],
-        endpoint="https://api.clinic.com/bookings",
+        endpoint=f"{MOCK_API_BASE}/bookings",
         credential_ref="scheduling-api-prod",
     )
     print(f"  Registered: {result['name']} v{result['version']} -> {result['status']}")
@@ -286,6 +333,7 @@ def main():
         behavior=ToolBehavior(is_read_only=True, is_idempotent=True),
         capabilities=["scheduling", "availability"],
         tags=["patient-facing", "read-only"],
+        endpoint=f"{MOCK_API_BASE}/availability",
     )
     print(f"  Registered: {result['name']} v{result['version']} -> {result['status']}")
 
@@ -343,8 +391,8 @@ def main():
     print(f"  Result: {exec_result.result}")
     print(f"  Time: {exec_result.execution_time_ms}ms")
     payload = exec_result.result if isinstance(exec_result.result, dict) else {}
-    if payload.get("credential_injected"):
-        print(f"  Credential injection (Listing 6.14): yes (type={payload.get('credential_type')})")
+    if payload.get("auth_header_present"):
+        print("  Credential injection (Listing 6.14): yes — mock API saw X-API-Key on the request")
 
     # ========================================================
     # 4. Tool Validation
