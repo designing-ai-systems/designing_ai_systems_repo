@@ -9,7 +9,13 @@ from typing import Dict, Optional
 
 import grpc
 
-from proto import data_pb2_grpc, models_pb2_grpc, sessions_pb2_grpc
+from proto import (
+    data_pb2_grpc,
+    guardrails_pb2_grpc,
+    models_pb2_grpc,
+    sessions_pb2_grpc,
+    tools_pb2_grpc,
+)
 from services.gateway.registry import ServiceRegistry
 
 
@@ -28,6 +34,8 @@ class GenericProxy:
             "sessions": lambda channel: sessions_pb2_grpc.SessionServiceStub(channel),
             "models": lambda channel: models_pb2_grpc.ModelServiceStub(channel),
             "data": lambda channel: data_pb2_grpc.DataServiceStub(channel),
+            "tools": lambda channel: tools_pb2_grpc.ToolServiceStub(channel),
+            "guardrails": lambda channel: guardrails_pb2_grpc.GuardrailsServiceStub(channel),
         }
 
     def _extract_target_service(self, context) -> Optional[str]:
@@ -36,7 +44,12 @@ class GenericProxy:
         return metadata.get("x-target-service")
 
     def _forward_request(self, service_name: str, stub_factory, method_name: str, request, context):
-        """Forward request to backend service."""
+        """
+        Forward request to backend service.
+
+        Uses the synchronous client stack; backends may be grpc.aio servers
+        (Tool, Guardrails) — wire-level compatibility is supported by grpcio.
+        """
         try:
             backend_addr = self.registry.get_platform_service_address(service_name)
             channel = grpc.insecure_channel(backend_addr)
@@ -167,5 +180,17 @@ class DataServiceProxy(GenericServiceProxy, data_pb2_grpc.DataServiceServicer):
 
     All methods automatically forwarded - no manual implementation needed!
     """
+
+    pass
+
+
+class ToolServiceProxy(GenericServiceProxy, tools_pb2_grpc.ToolServiceServicer):
+    """Proxy handler for Tool Service."""
+
+    pass
+
+
+class GuardrailsServiceProxy(GenericServiceProxy, guardrails_pb2_grpc.GuardrailsServiceServicer):
+    """Proxy handler for Guardrails Service."""
 
     pass

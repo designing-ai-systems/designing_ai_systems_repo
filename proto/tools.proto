@@ -1,0 +1,122 @@
+// Tool Service Protocol Buffer definitions.
+//
+// Book: "Designing AI Systems" (https://www.manning.com/books/designing-ai-systems)
+//   Listing 6.1: ToolService gRPC contract
+//   Listing 6.2: ToolDefinition message (identity + schema)
+//   Listing 6.3: ToolBehavior, RateLimits, CostMetadata
+//   Listing 6.7: DiscoverToolsRequest/Response
+//   Listing 6.17: ExecutionLimits
+
+syntax = "proto3";
+
+package tools;
+
+// Listing 6.1
+service ToolService {
+    rpc RegisterTool(RegisterToolRequest) returns (RegisterToolResponse);
+    rpc DiscoverTools(DiscoverToolsRequest) returns (DiscoverToolsResponse);
+    rpc ExecuteTool(ExecuteToolRequest) returns (ExecuteToolResponse);
+    rpc ValidateTool(ValidateToolRequest) returns (ValidateToolResponse);
+}
+
+// Listing 6.2: Tool definition with identity and schema
+message ToolDefinition {
+    string name = 1;
+    string version = 2;
+    string owner = 3;
+    string description = 4;
+    string parameters_json = 5;
+    string returns_json = 6;
+    ToolBehavior behavior = 7;
+    RateLimits rate_limits = 8;
+    CostMetadata cost = 9;
+    repeated string required_permissions = 10;
+    repeated string capabilities = 11;
+    repeated string tags = 12;
+    string endpoint = 13;
+    string credential_ref = 14;
+    ExecutionLimits execution_limits = 15;
+}
+
+// Listing 6.3: Operational metadata
+message ToolBehavior {
+    bool is_read_only = 1;
+    bool is_idempotent = 2;
+    bool requires_confirmation = 3;
+    int32 typical_latency_ms = 4;
+    repeated string side_effects = 5;
+}
+
+message RateLimits {
+    int32 requests_per_minute = 1;
+    int32 requests_per_session = 2;
+    int32 daily_limit = 3;
+}
+
+message CostMetadata {
+    float estimated_cost_usd = 1;
+    string billing_category = 2;
+}
+
+// Listing 6.17: Execution limits
+message ExecutionLimits {
+    int32 timeout_seconds = 1;
+    int32 memory_limit_mb = 2;
+    int32 cpu_limit_millicores = 3;
+    int32 max_response_size_kb = 4;
+    int32 max_retries = 5;
+}
+
+// --- Register ---
+
+message RegisterToolRequest {
+    ToolDefinition tool = 1;
+}
+
+message RegisterToolResponse {
+    string name = 1;
+    string version = 2;
+    string status = 3;
+}
+
+// --- Discover (Listing 6.7) ---
+
+message DiscoverToolsRequest {
+    string namespace = 1;
+    repeated string capabilities = 2;
+    repeated string tags = 3;
+    bool read_only = 4;
+    string version_constraint = 5;
+}
+
+message DiscoverToolsResponse {
+    repeated ToolDefinition tools = 1;
+    map<string, float> relevance_scores = 2;
+}
+
+// --- Execute ---
+
+message ExecuteToolRequest {
+    string tool_name = 1;
+    string arguments_json = 2;
+    string session_id = 3;
+}
+
+message ExecuteToolResponse {
+    bool success = 1;
+    string result_json = 2;
+    string error = 3;
+    int32 execution_time_ms = 4;
+}
+
+// --- Validate ---
+
+message ValidateToolRequest {
+    string tool_name = 1;
+    string arguments_json = 2;
+}
+
+message ValidateToolResponse {
+    bool valid = 1;
+    repeated string errors = 2;
+}
