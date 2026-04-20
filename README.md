@@ -101,7 +101,11 @@ python examples/quickstart_conversation.py
 
 **Tools & Guardrails (Chapter 6):**
 ```bash
-python examples/quickstart_tools.py
+python examples/quickstart_tools.py               # full platform end-to-end (+ model loop if OPENAI_API_KEY set)
+python examples/test_tool_service.py              # tool service: register / discover / HTTP exec + credential injection / async / circuit breaker
+python examples/test_tool_service.py --mcp        # same, plus a live MCP call to https://mcp.deepwiki.com/mcp
+python examples/test_guardrails_service.py        # guardrails: input validation, output filtering, policy check, violation reporting
+python examples/quickstart_mcp.py                 # platform registers DeepWiki (public MCP server) and runs real MCP calls
 ```
 
 **Run services separately** (optional):
@@ -394,7 +398,7 @@ pytest tests/ -v
 - **Model Service** (Chapter 3): OpenAI, Anthropic, streaming, prompt management, custom models, client-side fallback
 - **Session Service** (Chapter 4): Messages, pagination, model-managed memory, PostgreSQL
 - **Data Service** (Chapter 5): Document ingestion, chunking, vector/hybrid search, pgvector, dynamic parser registration
-- **Tool Service** (Chapter 6): Registration, discovery (namespace/capability/tags), versioning, sandboxed execution, circuit breaker, credential store
+- **Tool Service** (Chapter 6): Registration, discovery (namespace/capability/tags), versioning, HTTP execution with credential injection (api_key / bearer / oauth2 / basic) and per-tool timeout + response-size limits, async execution with task polling (Listing 6.16), MCP server registration over streamable HTTP with per-server policy overrides (Listing 6.18), circuit breaker, credential store
 - **Guardrails Service** (Chapter 6): Input validation (prompt injection, PII), output filtering (PII redaction), policy enforcement, violation reporting
 - **API Gateway**: gRPC proxy with service discovery (sessions, models, data, tools, guardrails); sync client to backends (tools/guardrails use grpc.aio servers, compatible at the wire level)
 - Observability & Experimentation (Chapter 7): planned -- traces, spans, structured logging, experimentation

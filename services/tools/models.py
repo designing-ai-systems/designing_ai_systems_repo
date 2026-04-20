@@ -68,6 +68,9 @@ class ToolDefinition:
     endpoint: str = ""
     credential_ref: str = ""
     execution_limits: Optional[ExecutionLimits] = None
+    # Listing 6.18: set when the tool was imported from an MCP server.
+    # Execute routes via the MCP client keyed on this URL.
+    mcp_server_url: str = ""
 
 
 @dataclass

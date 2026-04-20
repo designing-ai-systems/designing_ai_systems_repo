@@ -178,6 +178,80 @@ class ToolClient(BaseClient):
             execution_time_ms=response.execution_time_ms,
         )
 
+    # --- MCP registration (Listing 6.18) ---
+
+    def register_mcp_server(
+        self,
+        server_url: str,
+        namespace: str,
+        credential_ref: str = "",
+        policy_overrides: Optional[ToolBehavior] = None,
+        rate_limit_overrides: Optional[RateLimits] = None,
+    ) -> List[str]:
+        """Connect to an MCP server and import its tools into the registry.
+
+        Each imported tool is registered under ``<namespace>.<tool_name>``.
+        Returns the list of fully qualified platform tool names that were
+        imported so applications can discover them immediately.
+        """
+        request = tools_pb2.RegisterMcpServerRequest(
+            server_url=server_url,
+            namespace=namespace,
+            credential_ref=credential_ref,
+        )
+        if policy_overrides:
+            request.policy_overrides.CopyFrom(
+                tools_pb2.ToolBehavior(
+                    is_read_only=policy_overrides.is_read_only,
+                    is_idempotent=policy_overrides.is_idempotent,
+                    requires_confirmation=policy_overrides.requires_confirmation,
+                    typical_latency_ms=policy_overrides.typical_latency_ms,
+                    side_effects=policy_overrides.side_effects,
+                )
+            )
+        if rate_limit_overrides:
+            request.rate_limit_overrides.CopyFrom(
+                tools_pb2.RateLimits(
+                    requests_per_minute=rate_limit_overrides.requests_per_minute,
+                    requests_per_session=rate_limit_overrides.requests_per_session,
+                    daily_limit=rate_limit_overrides.daily_limit,
+                )
+            )
+        response = self._stub.RegisterMcpServer(request, metadata=self.metadata)
+        return list(response.imported_tool_names)
+
+    # --- Async execution (Listing 6.16) ---
+
+    def execute_async(
+        self,
+        tool_name: str,
+        arguments: Optional[Dict[str, Any]] = None,
+        session_id: str = "",
+    ) -> Dict[str, str]:
+        """Start a tool execution in the background; returns ``{"task_id", "status"}``.
+
+        Poll :meth:`get_task` to observe state transitions
+        (pending → running → succeeded | failed | timed_out).
+        """
+        request = tools_pb2.ExecuteToolRequest(
+            tool_name=tool_name,
+            arguments_json=json.dumps(arguments) if arguments else "{}",
+            session_id=session_id,
+        )
+        response = self._stub.ExecuteToolAsync(request, metadata=self.metadata)
+        return {"task_id": response.task_id, "status": response.status}
+
+    def get_task(self, task_id: str) -> Dict[str, Any]:
+        """Return the current state of an async task started by :meth:`execute_async`."""
+        request = tools_pb2.GetTaskRequest(task_id=task_id)
+        response = self._stub.GetTask(request, metadata=self.metadata)
+        return {
+            "task_id": response.task_id,
+            "status": response.status,
+            "result": json.loads(response.result_json) if response.result_json else None,
+            "error": response.error or None,
+        }
+
     # --- Validation ---
 
     def validate(
@@ -240,4 +314,5 @@ class ToolClient(BaseClient):
             endpoint=proto.endpoint,
             credential_ref=proto.credential_ref,
             execution_limits=execution_limits,
+            mcp_server_url=proto.mcp_server_url,
         )

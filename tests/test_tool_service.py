@@ -3,6 +3,7 @@
 import json
 
 import grpc
+import httpx
 
 from proto import tools_pb2
 from services.tools.circuit_breaker import CircuitBreaker
@@ -19,6 +20,19 @@ class FakeContext:
 
     def set_details(self, details):
         self.details_str = details
+
+
+def _ok_client(captured=None):
+    """Mock httpx client that records the request and returns 200 + {\"ok\": True}."""
+
+    def handler(request):
+        if captured is not None:
+            captured["headers"] = dict(request.headers)
+            captured["url"] = str(request.url)
+            captured["body"] = request.content.decode()
+        return httpx.Response(200, json={"ok": True})
+
+    return httpx.AsyncClient(transport=httpx.MockTransport(handler))
 
 
 class TestRegisterTool:
@@ -79,10 +93,15 @@ class TestDiscoverTools:
 
 class TestExecuteTool:
     async def test_execute_registered_tool(self):
-        svc = ToolServiceImpl()
+        captured = {}
+        svc = ToolServiceImpl(http_client=_ok_client(captured))
         await svc.RegisterTool(
             tools_pb2.RegisterToolRequest(
-                tool=tools_pb2.ToolDefinition(name="test.tool", description="A test")
+                tool=tools_pb2.ToolDefinition(
+                    name="test.tool",
+                    description="A test",
+                    endpoint="https://api.example.com/v1",
+                )
             ),
             FakeContext(),
         )
@@ -94,12 +113,12 @@ class TestExecuteTool:
             FakeContext(),
         )
         assert resp.success is True
-        result = json.loads(resp.result_json)
-        assert result["tool"] == "test.tool"
-        assert result.get("credential_injected") is None
+        assert json.loads(resp.result_json) == {"ok": True}
+        assert json.loads(captured["body"]) == {"key": "value"}
 
     async def test_execute_with_credential_injection(self):
-        svc = ToolServiceImpl()
+        captured = {}
+        svc = ToolServiceImpl(http_client=_ok_client(captured))
         await svc.credential_store.store(
             "scheduling-api-prod",
             "api_key",
@@ -111,6 +130,7 @@ class TestExecuteTool:
                 tool=tools_pb2.ToolDefinition(
                     name="test.tool",
                     description="A test",
+                    endpoint="https://api.example.com/v1",
                     credential_ref="scheduling-api-prod",
                 )
             ),
@@ -124,9 +144,8 @@ class TestExecuteTool:
             FakeContext(),
         )
         assert resp.success is True
-        result = json.loads(resp.result_json)
-        assert result.get("credential_injected") is True
-        assert result.get("credential_type") == "api_key"
+        # The credential is really on the outbound request, not just in the response dict.
+        assert captured["headers"].get("x-api-key") == "secret-xyz"
 
     async def test_execute_missing_credential(self):
         svc = ToolServiceImpl()
