@@ -10,6 +10,9 @@ The workflow itself uses `platform.workflows.update_job_progress(...)` and
 The gateway proxies the polling endpoint to `WorkflowService.GetJobStatus`
 over gRPC.
 
+Module-level imports are limited to the SDK so the container only runs
+the workflow function; harness-only imports live inside ``main()``.
+
 Book: "Designing AI Systems"
   - Listing 8.7 (async deep researcher)
   - Listing 8.8 (async handler that creates the job)
@@ -17,16 +20,10 @@ Book: "Designing AI Systems"
   - Listing 8.11 (progress + checkpointing)
 """
 
-import sys
+import os
 import time
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-import httpx  # noqa: E402
-
-from examples._workflow_demo_harness import gateway_http_url, local_platform  # noqa: E402
-from genai_platform import GenAIPlatform, workflow  # noqa: E402
+from genai_platform import GenAIPlatform, workflow
 
 
 @workflow(
@@ -36,9 +33,7 @@ from genai_platform import GenAIPlatform, workflow  # noqa: E402
     timeout_seconds=60,
 )
 def deep_research(topic: str, depth: int = 3) -> dict:
-    platform = GenAIPlatform(
-        gateway_url=__import__("os").environ.get("GENAI_GATEWAY_URL", "localhost:50151")
-    )
+    platform = GenAIPlatform(gateway_url=os.environ.get("GENAI_GATEWAY_URL", "localhost:50151"))
     platform.workflows.update_job_progress(message=f"Phase 1/3: gathering sources for {topic!r}")
     time.sleep(0.3)
     platform.workflows.save_checkpoint('{"phase": "sources_gathered"}')
@@ -53,6 +48,15 @@ def deep_research(topic: str, depth: int = 3) -> dict:
 
 
 def main() -> None:
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+    import httpx
+
+    from examples._workflow_demo_harness import gateway_http_url, local_platform
+
     with local_platform(deep_research):
         print(f"POST {gateway_http_url()}/research")
         r = httpx.post(

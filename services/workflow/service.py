@@ -231,6 +231,22 @@ class WorkflowServiceImpl(workflow_pb2_grpc.WorkflowServiceServicer, BaseService
         ready = self.deployer.wait_until_ready(host_port=result.host_port, timeout_seconds=30.0)
         endpoint = f"localhost:{result.host_port}"
 
+        if not ready:
+            # Surface the container's stderr/stdout so the operator can see
+            # why /health/ready never came up (most often: import error in
+            # the workflow source file). The CLI prints the error details.
+            logs = self.deployer.container_logs(result.container_id)
+            if logs:
+                logger.error(
+                    "workflow %s failed health check; container logs:\n%s",
+                    spec.name,
+                    logs,
+                )
+            context.set_details(
+                f"Workflow '{spec.name}' container failed /health/ready.\n"
+                f"--- last container log lines ---\n{logs or '(no logs available)'}"
+            )
+
         deployment = WorkflowDeployment(
             workflow_id=request.workflow_id,
             deployment_id=f"{spec.name}-v{version}",

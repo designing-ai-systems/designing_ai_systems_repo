@@ -1,29 +1,23 @@
 """
 Sync workflow quickstart — patient intake assistant (Listing 8.1).
 
-Runs the canonical sync workflow end-to-end against a locally-booted
-platform: Workflow Service + gateway + runtime server. Once the gateway
-is up, the script POSTs to the workflow's api_path and prints the JSON
-response.
+This file is dual-purpose:
 
-In commit 3, the local-bootstrap part is replaced by `genai-platform
-deploy examples/quickstart_workflow.py`, which builds a Docker image,
-runs it, and registers the route with the gateway automatically.
+- ``genai-platform deploy examples/quickstart_workflow.py`` packages it
+  into a container and runs it inside the platform. The container's
+  Python interpreter only executes module-level code, so module-level
+  imports must be limited to the SDK (no ``examples/`` package).
+- ``python examples/quickstart_workflow.py`` (run locally) boots the
+  full platform in-process via the demo harness and exercises the
+  workflow end-to-end. Harness-only imports therefore live inside
+  ``main()`` rather than at module scope.
 
 Book: "Designing AI Systems"
   - Listing 8.1 (the @workflow function)
   - Listing 8.4 (the sync handler that serves it)
 """
 
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-import httpx  # noqa: E402
-
-from examples._workflow_demo_harness import gateway_http_url, local_platform  # noqa: E402
-from genai_platform import workflow  # noqa: E402
+from genai_platform import workflow
 
 
 @workflow(
@@ -44,6 +38,17 @@ def handle_patient_question(question: str, patient_id: str) -> dict:
 
 
 def main() -> None:
+    # Harness imports happen here, not at module scope, so the deployed
+    # container can `import workflow` without needing `examples/`.
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+    import httpx
+
+    from examples._workflow_demo_harness import gateway_http_url, local_platform
+
     with local_platform(handle_patient_question):
         print(f"POST {gateway_http_url()}/patient-assistant")
         r = httpx.post(

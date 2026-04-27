@@ -343,12 +343,23 @@ def deploy_workflow(
         print("  --no-build: skipping DeployWorkflow (no image to run)")
         return
 
-    deploy = platform.workflows._stub.DeployWorkflow(
+    deploy_call = platform.workflows._stub.DeployWorkflow.with_call(
         _deploy_request(reg.workflow_id, reg.version),
         metadata=platform.workflows._metadata,
     )
+    deploy, call = deploy_call
     d = deploy.deployment
     print(f"  deployed (status={d.status}, endpoints={list(d.healthy_endpoints)})")
+
+    if d.status != "healthy":
+        # Workflow Service stuffs container logs into trailing details on
+        # failure. Surface them so the user sees what crashed.
+        details = call.details() or ""
+        if details:
+            print("\n  Deploy FAILED. Diagnostic from Workflow Service:")
+            print("  " + details.replace("\n", "\n  "))
+        return
+
     print(f"\nTry: curl -X POST {DEFAULT_GATEWAY_HTTP_URL}{item.metadata['api_path']} \\")
     print("       -H 'Content-Type: application/json' \\")
     print('       -d \'{"...": "..."}\'')

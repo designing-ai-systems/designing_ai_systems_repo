@@ -6,21 +6,16 @@ yielding chunks. The runtime server emits each chunk as a Server-Sent
 Event (`data: {json}\\n\\n`); the gateway streams the chunks through to
 the client without buffering.
 
+Module-level imports are limited to the SDK so this file can be
+``genai-platform deploy``'d into a container; harness-only imports live
+inside ``main()``.
+
 Book: "Designing AI Systems"
   - Listing 8.5 (streaming workflow)
   - Listing 8.6 (SSE handler)
 """
 
-import json
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-import httpx  # noqa: E402
-
-from examples._workflow_demo_harness import gateway_http_url, local_platform  # noqa: E402
-from genai_platform import workflow  # noqa: E402
+from genai_platform import workflow
 
 
 @workflow(
@@ -37,6 +32,16 @@ def stream_patient_answer(question: str, patient_id: str):
 
 
 def main() -> None:
+    import json
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+    import httpx
+
+    from examples._workflow_demo_harness import gateway_http_url, local_platform
+
     with local_platform(stream_patient_answer):
         print(f"POST (streaming) {gateway_http_url()}/patient-stream")
         with httpx.stream(

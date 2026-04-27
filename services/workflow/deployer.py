@@ -51,6 +51,10 @@ class Deployer(ABC):
     def stop(self, container_id: str) -> None:
         """Stop and remove a previously-deployed container."""
 
+    def container_logs(self, container_id: str, tail: int = 30) -> str:
+        """Optional: return recent container logs for failure diagnostics."""
+        return ""
+
 
 def _find_free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -112,6 +116,20 @@ class DockerDeployer(Deployer):
                 pass
             time.sleep(0.5)
         return False
+
+    def container_logs(self, container_id: str, tail: int = 30) -> str:
+        """Return the last ``tail`` lines of a container's stdout+stderr.
+
+        Used by the Workflow Service to surface why a workflow's
+        ``/health/ready`` never came up (most often: import error in the
+        workflow source file).
+        """
+        proc = subprocess.run(
+            ["docker", "logs", "--tail", str(tail), container_id],
+            capture_output=True,
+            text=True,
+        )
+        return (proc.stdout + proc.stderr).strip()
 
     def stop(self, container_id: str) -> None:
         subprocess.run(["docker", "rm", "-f", container_id], capture_output=True, text=True)

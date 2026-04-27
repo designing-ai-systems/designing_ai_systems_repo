@@ -20,36 +20,13 @@ Book: "Designing AI Systems"
   - Listing 8.18 (response-mode auto-detection)
 """
 
-import sys
-import threading
-import time
-from pathlib import Path
+import os
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import httpx
 
-import httpx  # noqa: E402
-import uvicorn  # noqa: E402
-from fastapi import FastAPI  # noqa: E402
-
-from genai_platform import GenAIPlatform, workflow  # noqa: E402
+from genai_platform import GenAIPlatform, workflow
 
 CHILDREN_PORT = 8210
-
-
-def _children_app() -> FastAPI:
-    app = FastAPI()
-
-    @app.post("/papers")
-    def papers(payload: dict) -> dict:
-        topic = payload.get("topic", "")
-        return {"topic": topic, "papers": [f"paper-{i}-{topic}" for i in range(3)]}
-
-    @app.post("/news")
-    def news(payload: dict) -> dict:
-        topic = payload.get("topic", "")
-        return {"topic": topic, "news": [f"news-{i}-{topic}" for i in range(2)]}
-
-    return app
 
 
 @workflow(
@@ -60,7 +37,7 @@ def _children_app() -> FastAPI:
 )
 def research_assistant(topic: str) -> dict:
     """Parent: fan out to two children in parallel and aggregate results."""
-    platform = GenAIPlatform(gateway_url="localhost:50151")
+    platform = GenAIPlatform(gateway_url=os.environ.get("GENAI_GATEWAY_URL", "localhost:50151"))
     # Point composition client straight at the children for the demo. The
     # real path goes parent → gateway HTTP → child container, exercised by
     # the unit tests in tests/test_workflow_compose.py.
@@ -82,9 +59,25 @@ def research_assistant(topic: str) -> dict:
 
 
 def main() -> None:
-    config = uvicorn.Config(
-        _children_app(), host="127.0.0.1", port=CHILDREN_PORT, log_level="error"
-    )
+    import threading
+    import time
+
+    import uvicorn
+    from fastapi import FastAPI
+
+    children_app = FastAPI()
+
+    @children_app.post("/papers")
+    def papers(payload: dict) -> dict:
+        topic = payload.get("topic", "")
+        return {"topic": topic, "papers": [f"paper-{i}-{topic}" for i in range(3)]}
+
+    @children_app.post("/news")
+    def news(payload: dict) -> dict:
+        topic = payload.get("topic", "")
+        return {"topic": topic, "news": [f"news-{i}-{topic}" for i in range(2)]}
+
+    config = uvicorn.Config(children_app, host="127.0.0.1", port=CHILDREN_PORT, log_level="error")
     server = uvicorn.Server(config)
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
