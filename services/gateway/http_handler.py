@@ -163,26 +163,7 @@ class WorkflowHTTPHandler(BaseHTTPRequestHandler):
             self._send_json({"error": str(e)}, status=500)
 
     def _refresh_routes_from_workflow_service(self) -> None:
-        """Pull the current route table from the Workflow Service and update the local cache.
-
-        Workflow Service's ListRoutes prunes dead containers before
-        returning, so this also drops stale entries from `self.registry`.
-        """
-        import grpc
-
-        from proto import workflow_pb2, workflow_pb2_grpc
-
-        try:
-            channel = grpc.insecure_channel(_workflow_service_addr())
-            stub = workflow_pb2_grpc.WorkflowServiceStub(channel)
-            resp = stub.ListRoutes(workflow_pb2.ListRoutesRequest(), timeout=2.0)
-        except grpc.RpcError as e:
-            logger.warning("could not refresh routes from Workflow Service: %s", e)
-            return
-
-        fresh = {r.api_path: r.endpoint for r in resp.routes}
-        # Replace the gateway's workflow cache with the Workflow Service's view.
-        self.registry._workflows = {path: [endpoint] for path, endpoint in fresh.items()}
+        refresh_routes_from_workflow_service(self.registry, _workflow_service_addr())
 
     def _forward(self, upstream_url: str, body: bytes) -> None:
         """Stream-aware forward: decides between buffered and SSE pass-through."""
@@ -246,3 +227,27 @@ class WorkflowHTTPHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):  # noqa: A002
         """Override to reduce noise."""
         pass
+
+
+def refresh_routes_from_workflow_service(
+    registry: ServiceRegistry, workflow_service_addr: str
+) -> None:
+    """Pull the current route table from the Workflow Service and update the local cache.
+
+    Replaces ``registry._workflows`` with the Workflow Service's view.
+    Workflow Service's ListRoutes prunes dead containers before
+    returning, so this also drops stale entries from the gateway cache.
+
+    Module-level so unit tests can call it without instantiating an
+    HTTPRequestHandler.
+    """
+    try:
+        channel = grpc.insecure_channel(workflow_service_addr)
+        stub = workflow_pb2_grpc.WorkflowServiceStub(channel)
+        resp = stub.ListRoutes(workflow_pb2.ListRoutesRequest(), timeout=2.0)
+    except grpc.RpcError as e:
+        logger.warning("could not refresh routes from Workflow Service: %s", e)
+        return
+
+    fresh = {r.api_path: r.endpoint for r in resp.routes}
+    registry._workflows = {path: [endpoint] for path, endpoint in fresh.items()}
