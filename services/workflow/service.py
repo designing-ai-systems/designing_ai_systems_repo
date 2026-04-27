@@ -242,8 +242,8 @@ class WorkflowServiceImpl(workflow_pb2_grpc.WorkflowServiceServicer, BaseService
             context.set_details(f"deploy failed: {e}")
             return workflow_pb2.DeployWorkflowResponse()
 
-        ready = self.deployer.wait_until_ready(host_port=result.host_port, timeout_seconds=30.0)
-        endpoint = f"localhost:{result.host_port}"
+        ready = self.deployer.wait_until_ready(endpoint=result.endpoint, timeout_seconds=30.0)
+        endpoint = result.endpoint
 
         if not ready:
             # Surface the container's stderr/stdout so the operator can see

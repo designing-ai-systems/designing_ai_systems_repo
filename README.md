@@ -108,15 +108,52 @@ python examples/test_guardrails_service.py        # guardrails: input validation
 python examples/quickstart_mcp.py                 # platform registers DeepWiki (public MCP server) and runs real MCP calls
 ```
 
-**Run services separately** (optional):
+### Local development with Docker (recommended)
+
+`docker compose up` brings up the seven platform services + a
+pgvector-enabled Postgres on a shared network, in one command:
+
+```bash
+# (one-time) build the per-service images
+docker compose build
+
+# bring everything up
+docker compose up -d
+
+# in a separate terminal, deploy + test a workflow
+genai-platform deploy examples/quickstart_workflow.py
+curl -X POST http://localhost:8080/patient-assistant \
+     -H 'Content-Type: application/json' \
+     -d '{"question":"What documents do I need?","patient_id":"p-1"}'
+```
+
+The gateway is the only service whose ports are mapped to the host
+(`8080` for external HTTP, `50051` for the SDK's gRPC channel).
+Inter-service traffic is private to the compose network.
+
+The Workflow Service mounts the host's docker socket so
+`genai-platform deploy` can launch new workflow containers onto the same
+compose network. The gateway then reaches each workflow container by its
+container name — no host port mapping needed for individual workflows.
+
+#### Run services separately, without Docker
+
+If you can't (or don't want to) use Docker, run each platform service
+in its own terminal:
+
 ```bash
 python -m services.sessions.main    # Terminal 1
 python -m services.models.main      # Terminal 2
 python -m services.data.main        # Terminal 3
 python -m services.tools.main       # Terminal 4
 python -m services.guardrails.main  # Terminal 5
-python -m services.gateway.main     # Terminal 6
+python -m services.workflow.main    # Terminal 6
+python -m services.gateway.main     # Terminal 7
 ```
+
+In this mode, `genai-platform deploy` falls back to host-port mode: each
+new workflow container gets a free host port and the gateway reaches it
+at `localhost:<port>`.
 
 ## Usage
 
@@ -478,6 +515,45 @@ Each source file maps to specific listings in [Designing AI Systems](https://www
 7. **Circuit breaker**: Tool execution protected by closed/open/half-open state machine (Listing 6.18).
 8. **Credential isolation**: Tools reference credentials by name; secrets stored separately (Listing 6.13-6.14).
 
+## Production deployment
+
+The architecture splits cleanly into **shared platform services** the
+platform team operates once per organization, and **per-app workflows**
+that application teams deploy individually. Both halves are
+container-first, so the same Docker images that run under
+`docker compose up` locally are what an adopter pushes to a registry
+and references from Kubernetes manifests.
+
+**Platform services (operate once):** `docker/sessions.Dockerfile`,
+`docker/models.Dockerfile`, `docker/data.Dockerfile`,
+`docker/tools.Dockerfile`, `docker/guardrails.Dockerfile`,
+`docker/gateway.Dockerfile`, `docker/workflow.Dockerfile`. Tag them for
+your registry, push, and apply your own Deployment / Service manifests
+(or the docker-compose stack as-is, for small deployments).
+
+**Workflows (one per AI app):** `genai-platform deploy <file>` writes
+Kubernetes manifests alongside the Docker artifacts:
+
+```
+build/<workflow-name>/
+├── Dockerfile                       # built and (optionally) pushed
+├── Deployment.yaml                  # populated from @workflow scaling fields
+├── HorizontalPodAutoscaler.yaml     # populated from min_/max_replicas / target_cpu_percent
+└── Service.yaml                     # exposes the workflow's port internally
+```
+
+Push the image to your registry, then `kubectl apply -f
+build/<workflow-name>/`. The CLI never invokes `kubectl` itself — the
+manifests are starter artifacts ready for any cluster.
+
+Why per-service Deployments (not sidecars)? Because stateful shared
+services lose their purpose when copied per-workflow. Sessions Service
+exists to share conversation state across workflows; sidecar = each
+workflow gets its own private session store. Same logic for Data Service
+(vector index), Tools Service (registry), Models Service (rate-limit
+pooling). The split between *shared platform services* and *per-workflow
+containers* is deliberate.
+
 ## Running Tests
 
 ```bash
@@ -494,5 +570,6 @@ pytest tests/ -v
 - **Guardrails Service** (Chapter 6): Input validation (prompt injection, PII), output filtering (PII redaction), policy enforcement, violation reporting
 - **API Gateway**: gRPC proxy with service discovery (sessions, models, data, tools, guardrails, workflow); sync client to backends (tools/guardrails use grpc.aio servers, compatible at the wire level); HTTP forwarding to workflow containers (sync / SSE / 202+poll); `/jobs/{id}` proxy to Workflow Service; route table re-hydrates from `WorkflowService.ListRoutes` on startup
 - **Workflow Service** (Chapter 8): `@workflow` decorator, FastAPI runtime server (sync / stream / async handlers), gRPC RetryInterceptor, workflow composition (`call`/`call_parallel`), `genai-platform deploy` CLI that builds Docker images and generates Kubernetes manifests
+- **Local platform stack**: `docker compose up` brings up Postgres + all seven services on a shared network; per-service Dockerfiles in `docker/` are the same artifacts a platform team would push to a registry for K8s
 - Observability & Experimentation (Chapter 7): planned -- traces, spans, structured logging, experimentation
 - AI Assistant (Chapter 9): planned -- agent loop, memory, knowledge, tools, safety, observability

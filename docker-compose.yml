@@ -1,0 +1,134 @@
+# GenAI Platform — local development stack.
+#
+# `docker compose up` brings up the seven platform services + a
+# pgvector-enabled Postgres on a shared network. The gateway is the only
+# service whose ports are mapped to the host (8080 for external HTTP,
+# 50051 for the SDK's gRPC channel); everything else is reachable only
+# from inside the compose network, by container name (e.g.,
+# `sessions:50052`).
+#
+# Each container runs the same image artifact a platform team would push
+# to a registry and reference from a Kubernetes Deployment — see
+# `docker/*.Dockerfile`. The compose file maps env vars to the same
+# config knobs the production deployment would use.
+#
+# Once this is up, `genai-platform deploy <file>` (run from the host)
+# packages a workflow into its own container and the Workflow Service
+# launches it onto the same compose network, so the gateway can route
+# traffic to it.
+
+name: genai-platform
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_DB: genai_platform
+      POSTGRES_USER: postgres
+      POSTGRES_HOST_AUTH_METHOD: trust
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Schemas auto-applied on first startup (postgres image runs every
+      # *.sql in /docker-entrypoint-initdb.d).
+      - ./services/sessions/schema.sql:/docker-entrypoint-initdb.d/01-sessions.sql:ro
+      - ./services/data/schema.sql:/docker-entrypoint-initdb.d/02-data.sql:ro
+      - ./services/workflow/schema.sql:/docker-entrypoint-initdb.d/03-workflow.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d genai_platform"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  sessions:
+    build:
+      context: .
+      dockerfile: docker/sessions.Dockerfile
+    image: genai-platform/sessions:dev
+    environment:
+      SESSION_STORAGE: postgres
+      DB_CONNECTION_STRING: postgresql://postgres@postgres/genai_platform
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  models:
+    build:
+      context: .
+      dockerfile: docker/models.Dockerfile
+    image: genai-platform/models:dev
+    env_file:
+      - path: ./.env
+        required: false
+    # OPENAI_API_KEY / ANTHROPIC_API_KEY come from .env when present.
+
+  data:
+    build:
+      context: .
+      dockerfile: docker/data.Dockerfile
+    image: genai-platform/data:dev
+    environment:
+      VECTOR_STORE: pgvector
+      DB_CONNECTION_STRING: postgresql://postgres@postgres/genai_platform
+      # Embedding generation goes through the Model Service (chapter 5).
+      GENAI_GATEWAY_URL: gateway:50051
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  tools:
+    build:
+      context: .
+      dockerfile: docker/tools.Dockerfile
+    image: genai-platform/tools:dev
+
+  guardrails:
+    build:
+      context: .
+      dockerfile: docker/guardrails.Dockerfile
+    image: genai-platform/guardrails:dev
+
+  workflow:
+    build:
+      context: .
+      dockerfile: docker/workflow.Dockerfile
+    image: genai-platform/workflow:dev
+    environment:
+      # Compose mode: new workflow containers share this network so the
+      # gateway can reach them by container name without a host port map.
+      WORKFLOW_DOCKER_NETWORK: genai-platform_default
+      # Workflow containers reach the gateway via DNS, not host.docker.internal.
+      GENAI_CONTAINER_GATEWAY_URL: gateway:50051
+      # The route_pusher's POST /__platform/register-route target.
+      GENAI_GATEWAY_HTTP_URL: http://gateway:8080
+    volumes:
+      # Required for `docker run` to land on the host's docker daemon.
+      # Trade-off: the workflow service can effectively control the host's
+      # docker. Acceptable for the book demo; production would replace
+      # this with a Kubernetes API client + RBAC.
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  gateway:
+    build:
+      context: .
+      dockerfile: docker/gateway.Dockerfile
+    image: genai-platform/gateway:dev
+    ports:
+      - "8080:8080"   # external HTTP — workflows reachable via `curl localhost:8080/<api_path>`
+      - "50051:50051" # SDK gRPC entry point
+    environment:
+      SESSIONS_SERVICE_ADDR: sessions:50052
+      MODELS_SERVICE_ADDR: models:50053
+      DATA_SERVICE_ADDR: data:50054
+      GUARDRAILS_SERVICE_ADDR: guardrails:50055
+      TOOLS_SERVICE_ADDR: tools:50056
+      WORKFLOW_SERVICE_ADDR: workflow:50058
+    depends_on:
+      - sessions
+      - models
+      - data
+      - tools
+      - guardrails
+      - workflow
+
+volumes:
+  postgres_data:

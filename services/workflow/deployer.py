@@ -5,6 +5,19 @@ In production this would speak to Kubernetes; for the book demo it shells
 out to ``docker run`` against a locally-built image. The seam is an
 abstract ``Deployer`` interface so tests can inject a fake.
 
+Two operating modes, picked by the ``WORKFLOW_DOCKER_NETWORK`` env var:
+
+- **Host mode** (default — used when running the platform services as
+  bare ``python -m services.X.main`` processes): the deployer picks a
+  free host port, maps the container's :8000 to it, and the endpoint is
+  ``localhost:<host_port>``.
+- **Compose-network mode** (used when the workflow service itself runs
+  inside ``docker compose up``): the deployer attaches new containers to
+  the same compose network and the endpoint is the container's name plus
+  the runtime port (e.g., ``genai-workflow-foo:8000``). The gateway,
+  also on that network, reaches the new container by its DNS name; no
+  host port mapping is needed.
+
 Book: "Designing AI Systems"
   - Listing 8.23 (Deployment lifecycle messages)
   - Section 8.7 (Deployment pipeline) — local Docker is the demo
@@ -14,6 +27,7 @@ Book: "Designing AI Systems"
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import socket
 import subprocess
@@ -26,8 +40,7 @@ import httpx
 logger = logging.getLogger(__name__)
 
 # `host.docker.internal` resolves to the host on Docker Desktop (Mac/Win) and
-# on Docker for Linux when started with `--add-host`. The gateway runs on the
-# host during demos, so containers reach it via this hostname.
+# on Docker for Linux when started with `--add-host`. Used in host mode.
 DEFAULT_CONTAINER_GATEWAY_URL = "host.docker.internal:50051"
 RUNTIME_CONTAINER_PORT = 8000
 
@@ -35,17 +48,17 @@ RUNTIME_CONTAINER_PORT = 8000
 @dataclass
 class DeployResult:
     container_id: str
-    host_port: int
+    endpoint: str  # e.g., "localhost:55512" (host mode) or "genai-workflow-foo:8000" (compose)
 
 
 class Deployer(ABC):
     @abstractmethod
     def deploy(self, *, image: str, name: str, gateway_url: str) -> DeployResult:
-        """Run the container for a workflow. Returns its (container_id, host_port)."""
+        """Run the container for a workflow. Returns its (container_id, endpoint)."""
 
     @abstractmethod
-    def wait_until_ready(self, *, host_port: int, timeout_seconds: float) -> bool:
-        """Poll `/health/ready` until it responds 200 or `timeout_seconds` elapses."""
+    def wait_until_ready(self, *, endpoint: str, timeout_seconds: float) -> bool:
+        """Poll `<endpoint>/health/ready` until it responds 200 or `timeout_seconds` elapses."""
 
     @abstractmethod
     def stop(self, container_id: str) -> None:
@@ -63,7 +76,13 @@ def _find_free_port() -> int:
 
 
 class DockerDeployer(Deployer):
-    """Spawns workflow containers via the local Docker daemon."""
+    """Spawns workflow containers via the local Docker daemon.
+
+    Host vs. compose mode is picked by ``WORKFLOW_DOCKER_NETWORK``: set it
+    to a docker-network name (e.g., ``genai-platform_default``) to run new
+    containers on that network and address them by container name; leave
+    it unset to fall back to host mode (port mapping + ``localhost``).
+    """
 
     def deploy(
         self,
@@ -83,33 +102,45 @@ class DockerDeployer(Deployer):
             text=True,
         )
 
-        host_port = _find_free_port()
+        compose_network = os.environ.get("WORKFLOW_DOCKER_NETWORK")
         cmd = [
             "docker",
             "run",
             "-d",
             "--name",
             container_name,
-            "-p",
-            f"{host_port}:{RUNTIME_CONTAINER_PORT}",
             "-e",
             f"WORKFLOW_NAME={name}",
             "-e",
             f"GENAI_GATEWAY_URL={gateway_url}",
-            "--add-host",
-            "host.docker.internal:host-gateway",
-            image,
         ]
+        if compose_network:
+            # Compose mode: container shares the platform's network. Gateway
+            # reaches it by DNS name; no host port mapping needed.
+            cmd += ["--network", compose_network]
+            endpoint = f"{container_name}:{RUNTIME_CONTAINER_PORT}"
+        else:
+            # Host mode: pick a free host port, map the container's :8000 to it.
+            host_port = _find_free_port()
+            cmd += [
+                "-p",
+                f"{host_port}:{RUNTIME_CONTAINER_PORT}",
+                "--add-host",
+                "host.docker.internal:host-gateway",
+            ]
+            endpoint = f"localhost:{host_port}"
+        cmd.append(image)
+
         proc = subprocess.run(cmd, capture_output=True, text=True)
         if proc.returncode != 0:
             raise RuntimeError(f"docker run failed: {proc.stderr.strip() or proc.stdout.strip()}")
-        return DeployResult(container_id=proc.stdout.strip(), host_port=host_port)
+        return DeployResult(container_id=proc.stdout.strip(), endpoint=endpoint)
 
-    def wait_until_ready(self, *, host_port: int, timeout_seconds: float = 30.0) -> bool:
+    def wait_until_ready(self, *, endpoint: str, timeout_seconds: float = 30.0) -> bool:
         deadline = time.time() + timeout_seconds
         while time.time() < deadline:
             try:
-                r = httpx.get(f"http://localhost:{host_port}/health/ready", timeout=2.0)
+                r = httpx.get(f"http://{endpoint}/health/ready", timeout=2.0)
                 if r.status_code == 200:
                     return True
             except httpx.RequestError:
@@ -138,17 +169,17 @@ class DockerDeployer(Deployer):
 class FakeDeployer(Deployer):
     """Test deployer that records calls and never touches Docker."""
 
-    def __init__(self, host_port: int = 18000):
-        self.host_port = host_port
+    def __init__(self, endpoint: str = "fake-host:18000"):
+        self.endpoint = endpoint
         self.deployed: list[dict] = []
         self.stopped: list[str] = []
         self.ready_returns: bool = True
 
     def deploy(self, *, image: str, name: str, gateway_url: str) -> DeployResult:
         self.deployed.append({"image": image, "name": name, "gateway_url": gateway_url})
-        return DeployResult(container_id=f"fake-{name}", host_port=self.host_port)
+        return DeployResult(container_id=f"fake-{name}", endpoint=self.endpoint)
 
-    def wait_until_ready(self, *, host_port: int, timeout_seconds: float) -> bool:
+    def wait_until_ready(self, *, endpoint: str, timeout_seconds: float) -> bool:
         return self.ready_returns
 
     def stop(self, container_id: str) -> None:

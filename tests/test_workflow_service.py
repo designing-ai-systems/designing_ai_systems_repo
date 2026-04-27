@@ -132,7 +132,7 @@ class TestUpdateAndDelete:
 
 class TestDeployWorkflow:
     def test_healthy_deploy_records_endpoint_and_pushes_route(self):
-        deployer = FakeDeployer(host_port=18001)
+        deployer = FakeDeployer(endpoint="fake-host:18001")
         pusher = FakeRoutePusher()
         svc = _svc(deployer=deployer, route_pusher=pusher)
         reg = svc.RegisterWorkflow(
@@ -145,13 +145,13 @@ class TestDeployWorkflow:
         )
         d = resp.deployment
         assert d.status == "healthy"
-        assert list(d.healthy_endpoints) == ["localhost:18001"]
+        assert list(d.healthy_endpoints) == ["fake-host:18001"]
         # Deployer was called with the expected name + image.
         assert len(deployer.deployed) == 1
         assert deployer.deployed[0]["name"] == "w"
         # Route was both stored locally and pushed to the gateway.
-        assert svc.routes()["/p"] == "localhost:18001"
-        assert pusher.pushed == [("/p", "localhost:18001")]
+        assert svc.routes()["/p"] == "fake-host:18001"
+        assert pusher.pushed == [("/p", "fake-host:18001")]
 
     def test_unhealthy_deploy_does_not_register_route(self):
         deployer = FakeDeployer()
