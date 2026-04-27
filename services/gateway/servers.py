@@ -13,6 +13,7 @@ from proto import (
     models_pb2_grpc,
     sessions_pb2_grpc,
     tools_pb2_grpc,
+    workflow_pb2_grpc,
 )
 from services.gateway.grpc_proxy import (
     DataServiceProxy,
@@ -21,6 +22,7 @@ from services.gateway.grpc_proxy import (
     ModelServiceProxy,
     SessionServiceProxy,
     ToolServiceProxy,
+    WorkflowServiceProxy,
 )
 from services.gateway.http_handler import WorkflowHTTPHandler
 from services.gateway.registry import ServiceRegistry
@@ -52,6 +54,7 @@ def create_grpc_server(registry: ServiceRegistry, port: int = 50051):
     guardrails_pb2_grpc.add_GuardrailsServiceServicer_to_server(
         GuardrailsServiceProxy(proxy), server
     )
+    workflow_pb2_grpc.add_WorkflowServiceServicer_to_server(WorkflowServiceProxy(proxy), server)
 
     listen_addr = f"[::]:{port}"
     server.add_insecure_port(listen_addr)

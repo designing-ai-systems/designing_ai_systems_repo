@@ -38,10 +38,13 @@ def main():
     registry.register_platform_service("guardrails", guardrails_addr)
     tools_addr = os.getenv("TOOLS_SERVICE_ADDR", "localhost:50056")
     registry.register_platform_service("tools", tools_addr)
+    workflow_addr = os.getenv("WORKFLOW_SERVICE_ADDR", "localhost:50058")
+    registry.register_platform_service("workflow", workflow_addr)
 
-    # Register workflows (in production, this would come from Workflow Service)
-    # For now, we can register manually for testing
-    # registry.register_workflow("/patient-assistant", "localhost:8000")
+    # Workflow routes are pushed to the gateway by the Workflow Service via
+    # `RegisterRoute` after a successful deploy (commit 3 of the chapter-8
+    # plan). Restarting the gateway re-hydrates the routing table from
+    # `WorkflowService.ListRoutes` so that gateway restarts are non-disruptive.
 
     # Ports
     http_port = int(os.getenv("GATEWAY_HTTP_PORT", "8080"))

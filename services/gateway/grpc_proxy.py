@@ -15,6 +15,7 @@ from proto import (
     models_pb2_grpc,
     sessions_pb2_grpc,
     tools_pb2_grpc,
+    workflow_pb2_grpc,
 )
 from services.gateway.registry import ServiceRegistry
 
@@ -36,6 +37,7 @@ class GenericProxy:
             "data": lambda channel: data_pb2_grpc.DataServiceStub(channel),
             "tools": lambda channel: tools_pb2_grpc.ToolServiceStub(channel),
             "guardrails": lambda channel: guardrails_pb2_grpc.GuardrailsServiceStub(channel),
+            "workflow": lambda channel: workflow_pb2_grpc.WorkflowServiceStub(channel),
         }
 
     def _extract_target_service(self, context) -> Optional[str]:
@@ -192,5 +194,11 @@ class ToolServiceProxy(GenericServiceProxy, tools_pb2_grpc.ToolServiceServicer):
 
 class GuardrailsServiceProxy(GenericServiceProxy, guardrails_pb2_grpc.GuardrailsServiceServicer):
     """Proxy handler for Guardrails Service."""
+
+    pass
+
+
+class WorkflowServiceProxy(GenericServiceProxy, workflow_pb2_grpc.WorkflowServiceServicer):
+    """Proxy handler for Workflow Service."""
 
     pass
