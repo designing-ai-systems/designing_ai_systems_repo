@@ -119,12 +119,70 @@ class WorkflowHTTPHandler(BaseHTTPRequestHandler):
         upstream_url = f"http://{target_addr}{api_path}"
         try:
             self._forward(upstream_url, body)
+        except httpx.ConnectError:
+            # Cached endpoint is dead. Refresh from the Workflow Service
+            # (which prunes dead containers when ListRoutes is called),
+            # then either retry once with the fresh address or fail with a
+            # clearer error than "Connection refused".
+            self._refresh_routes_from_workflow_service()
+            try:
+                fresh_addr = self.registry.get_workflow_address(api_path)
+            except ValueError:
+                self._send_json(
+                    {
+                        "error": (
+                            f"workflow at {api_path} is no longer reachable; "
+                            "redeploy with `genai-platform deploy <file>`"
+                        )
+                    },
+                    status=404,
+                )
+                return
+            if fresh_addr == target_addr:
+                # Same dead address — Workflow Service didn't have a fresher one.
+                self._send_json(
+                    {
+                        "error": (
+                            f"workflow at {api_path} is not responding; "
+                            "redeploy with `genai-platform deploy <file>`"
+                        )
+                    },
+                    status=502,
+                )
+                return
+            try:
+                self._forward(f"http://{fresh_addr}{api_path}", body)
+            except httpx.HTTPError as e:
+                logger.exception("forward to refreshed %s failed", fresh_addr)
+                self._send_json({"error": f"workflow unreachable: {e}"}, status=502)
         except httpx.HTTPError as e:
             logger.exception("forward to %s failed", upstream_url)
             self._send_json({"error": f"workflow unreachable: {e}"}, status=502)
         except Exception as e:  # noqa: BLE001
             logger.exception("POST %s failed", api_path)
             self._send_json({"error": str(e)}, status=500)
+
+    def _refresh_routes_from_workflow_service(self) -> None:
+        """Pull the current route table from the Workflow Service and update the local cache.
+
+        Workflow Service's ListRoutes prunes dead containers before
+        returning, so this also drops stale entries from `self.registry`.
+        """
+        import grpc
+
+        from proto import workflow_pb2, workflow_pb2_grpc
+
+        try:
+            channel = grpc.insecure_channel(_workflow_service_addr())
+            stub = workflow_pb2_grpc.WorkflowServiceStub(channel)
+            resp = stub.ListRoutes(workflow_pb2.ListRoutesRequest(), timeout=2.0)
+        except grpc.RpcError as e:
+            logger.warning("could not refresh routes from Workflow Service: %s", e)
+            return
+
+        fresh = {r.api_path: r.endpoint for r in resp.routes}
+        # Replace the gateway's workflow cache with the Workflow Service's view.
+        self.registry._workflows = {path: [endpoint] for path, endpoint in fresh.items()}
 
     def _forward(self, upstream_url: str, body: bytes) -> None:
         """Stream-aware forward: decides between buffered and SSE pass-through."""

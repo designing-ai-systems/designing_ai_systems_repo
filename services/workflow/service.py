@@ -47,6 +47,16 @@ from services.workflow.store import (
 logger = logging.getLogger(__name__)
 
 
+def _default_route_health_check(endpoint: str) -> bool:
+    """Probe `http://<endpoint>/health/ready`. Returns True iff 200."""
+    import httpx
+
+    try:
+        return httpx.get(f"http://{endpoint}/health/ready", timeout=0.5).status_code == 200
+    except httpx.RequestError:
+        return False
+
+
 class WorkflowServiceImpl(workflow_pb2_grpc.WorkflowServiceServicer, BaseServicer):
     def __init__(
         self,
@@ -54,6 +64,7 @@ class WorkflowServiceImpl(workflow_pb2_grpc.WorkflowServiceServicer, BaseService
         jobs: Optional[JobStore] = None,
         deployer: Optional[Deployer] = None,
         route_pusher: Optional[RoutePusher] = None,
+        route_health_check=None,
     ) -> None:
         self.registry = registry or InMemoryWorkflowRegistry()
         self.jobs = jobs or InMemoryJobStore()
@@ -61,6 +72,9 @@ class WorkflowServiceImpl(workflow_pb2_grpc.WorkflowServiceServicer, BaseService
         self.route_pusher = route_pusher or HttpRoutePusher(
             gateway_http_url=os.environ.get("GENAI_GATEWAY_HTTP_URL", "http://localhost:8080")
         )
+        # Tests pass `lambda endpoint: True` to disable real network probes;
+        # production keeps the default httpx-based check.
+        self._route_health_check = route_health_check or _default_route_health_check
         self._deployments: Dict[str, WorkflowDeployment] = {}
         # workflow_id -> running container id (so RollbackWorkflow can stop it).
         self._containers: Dict[str, str] = {}
@@ -293,10 +307,27 @@ class WorkflowServiceImpl(workflow_pb2_grpc.WorkflowServiceServicer, BaseService
         return workflow_pb2.RegisterRouteResponse(success=True)
 
     def ListRoutes(self, request, context):
-        """Source of truth for the gateway's routing-table re-hydration."""
+        """Source of truth for the gateway's routing-table re-hydration.
+
+        Probes each registered endpoint's `/health/ready` first and drops
+        routes whose container has gone away (e.g., docker daemon
+        restarted, container OOM'd, manual `docker rm -f`). Without this,
+        a dead container's stale route survives forever in both
+        `_routes` and the gateway's local cache.
+        """
+        self._prune_dead_routes()
         return workflow_pb2.ListRoutesResponse(
             routes=[workflow_pb2.Route(api_path=p, endpoint=e) for p, e in self._routes.items()]
         )
+
+    def _prune_dead_routes(self) -> None:
+        dead: list[str] = []
+        for path, endpoint in list(self._routes.items()):
+            if not self._route_health_check(endpoint):
+                dead.append(path)
+        for path in dead:
+            logger.info("pruning dead route %s → %s", path, self._routes[path])
+            del self._routes[path]
 
     def routes(self) -> Dict[str, str]:
         """Test/inspection accessor for the registered routes."""
