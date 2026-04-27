@@ -1,123 +1,120 @@
 """
-Workflow decorator for defining deployable AI workflows.
+The ``@workflow`` decorator — entry point for declaring a deployable AI workflow.
 
-The @workflow decorator captures deployment configuration and marks
-functions as workflows that can be deployed as independent services.
+A workflow is a Python function with deployment metadata attached. The
+deploy CLI reads that metadata to package the function into a container;
+the SDK runtime server (``genai_platform/runtime/server.py``, added in
+commit 2 of the chapter-8 plan) reads the same metadata at container
+startup to pick the right request handler (sync / stream / async).
+
+Book: "Designing AI Systems" — Listing 8.2.
+
+Field schema diverges from the manuscript draft of Listing 8.2 — this
+implementation uses flat keyword arguments instead of nested ``autoscaling_config`` /
+``deployment_config`` dicts. Reasons documented in
+``chapters/book_discrepancies_chapter8.md`` (#1):
+
+- discoverability and type safety: each kwarg has a name, default and
+  checked type; dict keys silently swallow typos and break IDE
+  autocomplete.
+- no pass-through benefit: nothing in the deploy CLI or runtime server
+  treats these as opaque blobs; both pluck specific fields out.
+- if the parameter list ever grows enough to need grouping, the right
+  next step is a typed ``ScalingConfig``/``ResourceConfig`` dataclass,
+  not a free-form dict.
+
+Example::
+
+    @workflow(
+        name="patient_intake_assistant",
+        api_path="/patient-assistant",
+        response_mode="sync",
+        min_replicas=1,
+        max_replicas=10,
+        target_cpu_percent=70,
+        cpu="500m",
+        memory="512Mi",
+        timeout_seconds=30,
+        max_retries=3,
+    )
+    def handle_patient_question(question, patient_id):
+        ...
 """
 
 from functools import wraps
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict
+
+VALID_RESPONSE_MODES = {"sync", "stream", "async"}
 
 
 def workflow(
     name: str,
     api_path: str,
     response_mode: str = "sync",
-    autoscaling_config: Optional[Dict[str, Any]] = None,
-    deployment_config: Optional[Dict[str, Any]] = None,
+    *,
+    # Scaling
+    min_replicas: int = 1,
+    max_replicas: int = 10,
+    target_cpu_percent: int = 70,
+    # Resources
+    cpu: str = "500m",
+    memory: str = "512Mi",
+    gpu_type: str = "",
+    num_gpus: int = 0,
+    # Reliability
+    timeout_seconds: int = 30,
+    max_retries: int = 3,
 ) -> Callable:
-    """
-    Decorator for defining AI workflows.
+    """Decorator that marks a function as a deployable workflow.
 
-    Workflows are functions that get deployed as independent containerized
-    services. The decorator captures deployment configuration that the
-    deployment tool uses to package and register workflows.
+    The decorated function still runs unchanged when called directly;
+    deployment metadata is attached as ``func._workflow_metadata`` and is
+    read by the deploy CLI and the runtime server.
 
     Args:
-        name: Unique workflow identifier
-        api_path: API endpoint path where this workflow is exposed
-        response_mode: Response pattern - "sync", "async", or "stream"
-        autoscaling_config: Optional dict with autoscaling settings:
-            - min_replicas: Minimum number of container replicas (default: 1)
-            - max_replicas: Maximum number of container replicas (default: 10)
-            - target_ongoing_requests: Target number of ongoing requests per replica
-                                      before scaling up (default: 10)
-            - target_cpu_percent: Optional CPU threshold (0-100) for scaling.
-                                 If not set, uses request-based scaling only.
-        deployment_config: Optional dict with advanced deployment settings.
-            This dict is flexible and accepts any keys - the deployment tool
-            will pass through all configuration. Common options include:
-            - memory_limit: Memory limit per container (e.g., "512Mi", "2Gi")
-            - cpu_limit: CPU limit per container (e.g., "500m", "2")
-            - gpu_count: Number of GPUs per container (e.g., 1, 2)
-            - gpu_type: GPU type/model (e.g., "nvidia-t4", "nvidia-a100")
-            - request_timeout: Request timeout in seconds
-            - execution_timeout: Maximum execution time in seconds
-            - env_vars: Dict of environment variables
-            - secrets: List of secret names to mount
-            - health_check_path: Path for health checks (default: "/health")
-            - health_check_interval: Health check interval in seconds
-            - max_retries: Maximum retry attempts for failed requests
-            - labels: Dict of labels for observability/tagging
-            Any additional keys will be passed through to the deployment system.
+        name: Unique workflow identifier.
+        api_path: HTTP path the gateway will route to this workflow.
+        response_mode: ``"sync"`` (single JSON response), ``"stream"``
+            (Server-Sent Events / progressive tokens), or ``"async"``
+            (returns 202 + ``job_id``; clients poll ``/jobs/{id}``).
+        min_replicas, max_replicas, target_cpu_percent: Horizontal
+            autoscaling settings consumed by the generated Kubernetes
+            HorizontalPodAutoscaler manifest (commit 3 of the chapter-8
+            plan generates these).
+        cpu, memory, gpu_type, num_gpus: Per-replica resource limits;
+            ``gpu_type=""`` and ``num_gpus=0`` mean CPU-only.
+        timeout_seconds, max_retries: Reliability knobs read by the
+            runtime server's request handlers.
 
-    Example:
-        # Simple workflow with defaults
-        @workflow(
-            name="patient_intake_assistant",
-            api_path="/patient-assistant"
-        )
-        def handle_patient_question(question, patient_id):
-            platform = GenAIPlatform()
-            # ... workflow logic ...
-            return {"response": "..."}
-
-        # Workflow with custom autoscaling
-        @workflow(
-            name="high_traffic_service",
-            api_path="/api",
-            autoscaling_config={
-                "min_replicas": 2,
-                "max_replicas": 20,
-                "target_ongoing_requests": 5  # Scale up when >5 requests per replica
-            }
-        )
-        def handle_request(data):
-            # ... handle request ...
-            pass
-
-        # GPU-enabled workflow for model inference
-        @workflow(
-            name="model_inference",
-            api_path="/infer",
-            deployment_config={
-                "gpu_count": 1,
-                "gpu_type": "nvidia-t4",
-                "memory_limit": "8Gi",
-                "cpu_limit": "4"
-            }
-        )
-        def run_inference(input_data):
-            # ... GPU-accelerated inference ...
-            pass
-
+    Raises:
+        ValueError: ``response_mode`` is not one of sync / stream / async.
     """
+    if response_mode not in VALID_RESPONSE_MODES:
+        raise ValueError(
+            f"Invalid response_mode {response_mode!r}; "
+            f"must be one of {sorted(VALID_RESPONSE_MODES)}"
+        )
 
     def decorator(func: Callable) -> Callable:
         @wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
-            # The wrapper just calls the original function
-            # The decorator doesn't change behavior, just adds metadata
             return func(*args, **kwargs)
 
-        # Build deployment metadata
-        metadata = {"name": name, "api_path": api_path, "response_mode": response_mode}
-
-        # Set up autoscaling config - merge user config with defaults
-        default_autoscaling = {"min_replicas": 1, "max_replicas": 10, "target_ongoing_requests": 10}
-        if autoscaling_config:
-            # Merge user config over defaults
-            metadata["autoscaling"] = {**default_autoscaling, **autoscaling_config}
-        else:
-            metadata["autoscaling"] = default_autoscaling
-
-        # Add deployment config if provided
-        if deployment_config:
-            metadata["deployment_config"] = deployment_config
-
-        # Attach deployment metadata to the function
+        metadata: Dict[str, Any] = {
+            "name": name,
+            "api_path": api_path,
+            "response_mode": response_mode,
+            "min_replicas": min_replicas,
+            "max_replicas": max_replicas,
+            "target_cpu_percent": target_cpu_percent,
+            "cpu": cpu,
+            "memory": memory,
+            "gpu_type": gpu_type,
+            "num_gpus": num_gpus,
+            "timeout_seconds": timeout_seconds,
+            "max_retries": max_retries,
+        }
         wrapper._workflow_metadata = metadata
-
         return wrapper
 
     return decorator

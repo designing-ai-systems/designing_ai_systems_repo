@@ -13,6 +13,7 @@ from .clients.guardrails import GuardrailsClient
 from .clients.models import ModelClient
 from .clients.sessions import SessionClient
 from .clients.tools import ToolClient
+from .clients.workflow import WorkflowClient
 
 
 class GenAIPlatform:
@@ -50,6 +51,7 @@ class GenAIPlatform:
         self._guardrails = None
         self._tools = None
         self._evaluation = None
+        self._workflows = None
 
     @property
     def sessions(self) -> SessionClient:
@@ -92,3 +94,10 @@ class GenAIPlatform:
         if self._evaluation is None:
             self._evaluation = EvaluationClient(self)
         return self._evaluation
+
+    @property
+    def workflows(self) -> WorkflowClient:
+        """Access the Workflow Service client (Listing 8.10–8.11)."""
+        if self._workflows is None:
+            self._workflows = WorkflowClient(self)
+        return self._workflows
