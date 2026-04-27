@@ -18,7 +18,13 @@ dependencies = [
     # 8.3-8.12) and the FastAPI app used by the gateway-side /jobs proxy.
     "fastapi>=0.110.0",
     "uvicorn>=0.27.0",
+    # Chapter 8 deploy CLI emits Kubernetes manifests as YAML (Listing 8.23
+    # adjacent — Deployment / HorizontalPodAutoscaler / Service).
+    "pyyaml>=6.0",
 ]
+
+[project.scripts]
+genai-platform = "genai_platform.cli.deploy:main"
 
 [project.optional-dependencies]
 postgres = [

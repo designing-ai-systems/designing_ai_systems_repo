@@ -6,7 +6,16 @@ import grpc
 import pytest
 
 from proto import workflow_pb2
+from services.workflow.deployer import FakeDeployer, FakeRoutePusher
 from services.workflow.service import WorkflowServiceImpl
+
+
+def _svc(deployer=None, route_pusher=None):
+    """Construct a WorkflowServiceImpl with fake deploy infrastructure."""
+    return WorkflowServiceImpl(
+        deployer=deployer or FakeDeployer(),
+        route_pusher=route_pusher or FakeRoutePusher(),
+    )
 
 
 class FakeContext:
@@ -39,7 +48,7 @@ def _make_spec(name="patient_intake", api_path="/p", response_mode="sync"):
 
 class TestRegisterWorkflow:
     def test_returns_workflow_id_and_initial_version(self):
-        svc = WorkflowServiceImpl()
+        svc = _svc()
         resp = svc.RegisterWorkflow(
             workflow_pb2.RegisterWorkflowRequest(spec=_make_spec()), FakeContext()
         )
@@ -47,7 +56,7 @@ class TestRegisterWorkflow:
         assert resp.version == 1
 
     def test_re_registering_same_name_bumps_version(self):
-        svc = WorkflowServiceImpl()
+        svc = _svc()
         svc.RegisterWorkflow(
             workflow_pb2.RegisterWorkflowRequest(spec=_make_spec(name="w")), FakeContext()
         )
@@ -59,7 +68,7 @@ class TestRegisterWorkflow:
 
 class TestGetWorkflow:
     def test_returns_spec_for_known(self):
-        svc = WorkflowServiceImpl()
+        svc = _svc()
         svc.RegisterWorkflow(
             workflow_pb2.RegisterWorkflowRequest(spec=_make_spec(name="w")), FakeContext()
         )
@@ -67,7 +76,7 @@ class TestGetWorkflow:
         assert resp.spec.name == "w"
 
     def test_unknown_returns_not_found(self):
-        svc = WorkflowServiceImpl()
+        svc = _svc()
         ctx = FakeContext()
         svc.GetWorkflow(workflow_pb2.GetWorkflowRequest(name="missing"), ctx)
         assert ctx.code == grpc.StatusCode.NOT_FOUND
@@ -75,7 +84,7 @@ class TestGetWorkflow:
 
 class TestListWorkflows:
     def test_returns_all_specs(self):
-        svc = WorkflowServiceImpl()
+        svc = _svc()
         svc.RegisterWorkflow(
             workflow_pb2.RegisterWorkflowRequest(spec=_make_spec(name="a")), FakeContext()
         )
@@ -88,7 +97,7 @@ class TestListWorkflows:
 
 class TestUpdateAndDelete:
     def test_update_increments_version(self):
-        svc = WorkflowServiceImpl()
+        svc = _svc()
         svc.RegisterWorkflow(
             workflow_pb2.RegisterWorkflowRequest(spec=_make_spec(name="w")), FakeContext()
         )
@@ -99,13 +108,13 @@ class TestUpdateAndDelete:
         assert resp.version == 2
 
     def test_update_unknown_returns_not_found(self):
-        svc = WorkflowServiceImpl()
+        svc = _svc()
         ctx = FakeContext()
         svc.UpdateWorkflow(workflow_pb2.UpdateWorkflowRequest(spec=_make_spec(name="missing")), ctx)
         assert ctx.code == grpc.StatusCode.NOT_FOUND
 
     def test_delete_existing(self):
-        svc = WorkflowServiceImpl()
+        svc = _svc()
         svc.RegisterWorkflow(
             workflow_pb2.RegisterWorkflowRequest(spec=_make_spec(name="w")), FakeContext()
         )
@@ -113,7 +122,7 @@ class TestUpdateAndDelete:
         assert resp.success is True
 
     def test_delete_missing(self):
-        svc = WorkflowServiceImpl()
+        svc = _svc()
         resp = svc.DeleteWorkflow(workflow_pb2.DeleteWorkflowRequest(name="x"), FakeContext())
         assert resp.success is False
 
@@ -122,24 +131,65 @@ class TestUpdateAndDelete:
 
 
 class TestDeployWorkflow:
-    def test_returns_deployment_record(self):
-        svc = WorkflowServiceImpl()
+    def test_healthy_deploy_records_endpoint_and_pushes_route(self):
+        deployer = FakeDeployer(host_port=18001)
+        pusher = FakeRoutePusher()
+        svc = _svc(deployer=deployer, route_pusher=pusher)
         reg = svc.RegisterWorkflow(
-            workflow_pb2.RegisterWorkflowRequest(spec=_make_spec(name="w")), FakeContext()
+            workflow_pb2.RegisterWorkflowRequest(spec=_make_spec(name="w", api_path="/p")),
+            FakeContext(),
         )
         resp = svc.DeployWorkflow(
             workflow_pb2.DeployWorkflowRequest(workflow_id=reg.workflow_id, version=1),
             FakeContext(),
         )
         d = resp.deployment
-        assert d.workflow_id == reg.workflow_id
-        assert d.version == 1
-        # Status reflects the metadata-only deploy used in commit 1; commit 3
-        # replaces this with real `docker run` and a transition to "healthy".
-        assert d.status in ("deploying", "healthy")
+        assert d.status == "healthy"
+        assert list(d.healthy_endpoints) == ["localhost:18001"]
+        # Deployer was called with the expected name + image.
+        assert len(deployer.deployed) == 1
+        assert deployer.deployed[0]["name"] == "w"
+        # Route was both stored locally and pushed to the gateway.
+        assert svc.routes()["/p"] == "localhost:18001"
+        assert pusher.pushed == [("/p", "localhost:18001")]
+
+    def test_unhealthy_deploy_does_not_register_route(self):
+        deployer = FakeDeployer()
+        deployer.ready_returns = False
+        pusher = FakeRoutePusher()
+        svc = _svc(deployer=deployer, route_pusher=pusher)
+        reg = svc.RegisterWorkflow(
+            workflow_pb2.RegisterWorkflowRequest(spec=_make_spec(name="w", api_path="/p")),
+            FakeContext(),
+        )
+        resp = svc.DeployWorkflow(
+            workflow_pb2.DeployWorkflowRequest(workflow_id=reg.workflow_id, version=1),
+            FakeContext(),
+        )
+        assert resp.deployment.status == "failed"
+        assert svc.routes() == {}
+        assert pusher.pushed == []
+
+    def test_redeploy_stops_previous_container(self):
+        deployer = FakeDeployer()
+        svc = _svc(deployer=deployer)
+        reg = svc.RegisterWorkflow(
+            workflow_pb2.RegisterWorkflowRequest(spec=_make_spec(name="w")),
+            FakeContext(),
+        )
+        svc.DeployWorkflow(
+            workflow_pb2.DeployWorkflowRequest(workflow_id=reg.workflow_id, version=1),
+            FakeContext(),
+        )
+        svc.DeployWorkflow(
+            workflow_pb2.DeployWorkflowRequest(workflow_id=reg.workflow_id, version=2),
+            FakeContext(),
+        )
+        # Second deploy should have stopped the first container.
+        assert deployer.stopped == ["fake-w"]
 
     def test_unknown_workflow_returns_not_found(self):
-        svc = WorkflowServiceImpl()
+        svc = _svc()
         ctx = FakeContext()
         svc.DeployWorkflow(
             workflow_pb2.DeployWorkflowRequest(workflow_id="does-not-exist", version=1), ctx
@@ -149,7 +199,7 @@ class TestDeployWorkflow:
 
 class TestGetDeploymentStatus:
     def test_returns_record_after_deploy(self):
-        svc = WorkflowServiceImpl()
+        svc = _svc()
         reg = svc.RegisterWorkflow(
             workflow_pb2.RegisterWorkflowRequest(spec=_make_spec(name="w")), FakeContext()
         )
@@ -163,7 +213,7 @@ class TestGetDeploymentStatus:
         assert resp.deployment.workflow_id == reg.workflow_id
 
     def test_unknown_returns_not_found(self):
-        svc = WorkflowServiceImpl()
+        svc = _svc()
         ctx = FakeContext()
         svc.GetDeploymentStatus(workflow_pb2.GetDeploymentStatusRequest(workflow_id="missing"), ctx)
         assert ctx.code == grpc.StatusCode.NOT_FOUND
@@ -174,7 +224,7 @@ class TestGetDeploymentStatus:
 
 class TestRegisterRoute:
     def test_records_route_in_local_table(self):
-        svc = WorkflowServiceImpl()
+        svc = _svc()
         resp = svc.RegisterRoute(
             workflow_pb2.RegisterRouteRequest(
                 api_path="/patient-assistant", endpoint="localhost:8001"
@@ -191,7 +241,7 @@ class TestRegisterRoute:
 
 class TestJobLifecycle:
     def test_create_then_get(self):
-        svc = WorkflowServiceImpl()
+        svc = _svc()
         # Register a workflow first so there's something to attach the job to.
         reg = svc.RegisterWorkflow(
             workflow_pb2.RegisterWorkflowRequest(spec=_make_spec(name="researcher")),
@@ -213,7 +263,7 @@ class TestJobLifecycle:
         assert g.job.input_json == '{"topic": "x"}'
 
     def test_progress_then_complete(self):
-        svc = WorkflowServiceImpl()
+        svc = _svc()
         c = svc.CreateJob(
             workflow_pb2.CreateJobRequest(workflow_id="w", input_json="{}"),
             FakeContext(),
@@ -242,7 +292,7 @@ class TestJobLifecycle:
         assert g.job.checkpoint_json == '{"phase": "retrieved"}'
 
     def test_fail_records_error(self):
-        svc = WorkflowServiceImpl()
+        svc = _svc()
         c = svc.CreateJob(
             workflow_pb2.CreateJobRequest(workflow_id="w", input_json="{}"), FakeContext()
         )
@@ -252,7 +302,7 @@ class TestJobLifecycle:
         assert g.job.error == "boom"
 
     def test_cancel(self):
-        svc = WorkflowServiceImpl()
+        svc = _svc()
         c = svc.CreateJob(
             workflow_pb2.CreateJobRequest(workflow_id="w", input_json="{}"), FakeContext()
         )
@@ -261,7 +311,7 @@ class TestJobLifecycle:
         assert g.job.status == "cancelled"
 
     def test_get_unknown_job_returns_not_found(self):
-        svc = WorkflowServiceImpl()
+        svc = _svc()
         ctx = FakeContext()
         svc.GetJobStatus(workflow_pb2.GetJobStatusRequest(job_id="missing"), ctx)
         assert ctx.code == grpc.StatusCode.NOT_FOUND
@@ -279,7 +329,7 @@ class TestJobLifecycle:
 )
 class TestJobOpsOnUnknownJob:
     def test_returns_not_found(self, op):
-        svc = WorkflowServiceImpl()
+        svc = _svc()
         method_name, request_cls, kwargs = op
         ctx = FakeContext()
         getattr(svc, method_name)(request_cls(job_id="missing", **kwargs), ctx)

@@ -80,6 +80,11 @@ class WorkflowServiceStub(object):
                 request_serializer=workflow__pb2.RegisterRouteRequest.SerializeToString,
                 response_deserializer=workflow__pb2.RegisterRouteResponse.FromString,
                 _registered_method=True)
+        self.ListRoutes = channel.unary_unary(
+                '/workflow.WorkflowService/ListRoutes',
+                request_serializer=workflow__pb2.ListRoutesRequest.SerializeToString,
+                response_deserializer=workflow__pb2.ListRoutesResponse.FromString,
+                _registered_method=True)
         self.CreateJob = channel.unary_unary(
                 '/workflow.WorkflowService/CreateJob',
                 request_serializer=workflow__pb2.CreateJobRequest.SerializeToString,
@@ -178,6 +183,12 @@ class WorkflowServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def ListRoutes(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def CreateJob(self, request, context):
         """Async jobs (Listing 8.10–8.11)
         """
@@ -268,6 +279,11 @@ def add_WorkflowServiceServicer_to_server(servicer, server):
                     servicer.RegisterRoute,
                     request_deserializer=workflow__pb2.RegisterRouteRequest.FromString,
                     response_serializer=workflow__pb2.RegisterRouteResponse.SerializeToString,
+            ),
+            'ListRoutes': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListRoutes,
+                    request_deserializer=workflow__pb2.ListRoutesRequest.FromString,
+                    response_serializer=workflow__pb2.ListRoutesResponse.SerializeToString,
             ),
             'CreateJob': grpc.unary_unary_rpc_method_handler(
                     servicer.CreateJob,
@@ -549,6 +565,33 @@ class WorkflowService(object):
             '/workflow.WorkflowService/RegisterRoute',
             workflow__pb2.RegisterRouteRequest.SerializeToString,
             workflow__pb2.RegisterRouteResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListRoutes(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/workflow.WorkflowService/ListRoutes',
+            workflow__pb2.ListRoutesRequest.SerializeToString,
+            workflow__pb2.ListRoutesResponse.FromString,
             options,
             channel_credentials,
             insecure,

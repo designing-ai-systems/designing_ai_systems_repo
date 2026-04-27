@@ -25,6 +25,7 @@ service WorkflowService {
 
     // Routing — Workflow Service pushes routes; gateway re-hydrates on startup.
     rpc RegisterRoute(RegisterRouteRequest) returns (RegisterRouteResponse);
+    rpc ListRoutes(ListRoutesRequest) returns (ListRoutesResponse);
 
     // Async jobs (Listing 8.10–8.11)
     rpc CreateJob(CreateJobRequest) returns (CreateJobResponse);
@@ -153,6 +154,17 @@ message RegisterRouteRequest {
 
 message RegisterRouteResponse {
     bool success = 1;
+}
+
+message Route {
+    string api_path = 1;
+    string endpoint = 2;
+}
+
+message ListRoutesRequest {}
+
+message ListRoutesResponse {
+    repeated Route routes = 1;
 }
 
 // Async jobs (Listing 8.10–8.11). State machine matches Listing 6.16 / ToolTask:

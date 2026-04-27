@@ -263,6 +263,98 @@ result = platform.guardrails.check_policy(
 print(result.allowed)
 ```
 
+### Workflow Service (Chapter 8)
+
+Decorate a function with `@workflow`, run `genai-platform deploy`, and the
+function becomes an HTTP service routed by the gateway. Three response
+modes; the SDK's `platform.workflows.call(...)` auto-detects which one a
+child workflow uses, so parent code never branches on it.
+
+```python
+from genai_platform import GenAIPlatform, workflow
+
+# Listings 8.1, 8.2, 8.4: a sync workflow.
+@workflow(
+    name="patient_intake_assistant",
+    api_path="/patient-assistant",
+    response_mode="sync",
+    min_replicas=1,
+    max_replicas=10,
+    target_cpu_percent=70,
+    cpu="500m",
+    memory="512Mi",
+    timeout_seconds=15,
+)
+def handle(question: str, patient_id: str) -> dict:
+    platform = GenAIPlatform()
+    # ... orchestrate sessions / models / data / guardrails ...
+    return {"patient_id": patient_id, "answer": "..."}
+```
+
+**Deploy locally** (chapter-8 demo flow):
+
+```bash
+# 1. Bring up the platform services
+docker compose up -d         # (lands in commit 4 — for now: python -m services.X.main)
+
+# 2. Build the image, register, run the container, register the route.
+genai-platform deploy examples/quickstart_workflow.py
+
+# 3. Hit the workflow through the gateway.
+curl -X POST http://localhost:8080/patient-assistant \
+     -H 'Content-Type: application/json' \
+     -d '{"question": "What documents do I need?", "patient_id": "p-1"}'
+```
+
+`genai-platform deploy` writes `Dockerfile`, `Deployment.yaml`,
+`HorizontalPodAutoscaler.yaml`, and `Service.yaml` to
+`build/<workflow-name>/`. The Kubernetes manifests are
+**ready-to-apply artifacts** — the CLI does not invoke `kubectl`. To
+deploy to a real cluster (EKS / GKE / minikube / ...):
+
+```bash
+# Push the image to your registry, then:
+kubectl apply -f build/patient_intake_assistant/
+```
+
+**Composition** (Listings 8.15-8.18):
+
+```python
+@workflow(name="research_assistant", api_path="/research-assistant", response_mode="sync")
+def parent(topic: str) -> dict:
+    platform = GenAIPlatform()
+    papers, news = platform.workflows.call_parallel([
+        ("/papers", {"topic": topic}),
+        ("/news", {"topic": topic}),
+    ])
+    return {"papers": papers, "news": news}
+```
+
+**Async + polling** (Listings 8.7, 8.10, 8.11):
+
+```python
+@workflow(name="deep_researcher", api_path="/research", response_mode="async")
+def deep_research(topic: str, depth: int = 3) -> dict:
+    platform = GenAIPlatform()
+    platform.workflows.update_job_progress(message="phase 1/3: gathering")
+    # ... long-running work, with checkpoint() between phases ...
+    return {"summary": "..."}
+
+# Client side:
+# POST /research → 202 + {"job_id": "...", "status_url": "/jobs/..."}
+# GET /jobs/{id} → eventually {"job": {"status": "succeeded", "result_json": ...}}
+```
+
+Runnable end-to-end demos:
+- `examples/quickstart_workflow.py` — sync (Listings 8.1, 8.4)
+- `examples/quickstart_workflow_stream.py` — streaming SSE (Listings 8.5, 8.6)
+- `examples/quickstart_workflow_async.py` — async + checkpoint + polling (Listings 8.7, 8.8, 8.10, 8.11)
+- `examples/quickstart_workflow_compose.py` — `call_parallel` across children (Listings 8.15-8.18)
+
+**Prerequisite for chapter-8 demos:** Docker installed (the deploy CLI
+calls `docker build` and the Workflow Service runs containers via
+`docker run`).
+
 ## Supported Models
 
 **OpenAI**: `gpt-4o`, `gpt-4o-mini`
@@ -400,7 +492,7 @@ pytest tests/ -v
 - **Data Service** (Chapter 5): Document ingestion, chunking, vector/hybrid search, pgvector, dynamic parser registration
 - **Tool Service** (Chapter 6): Registration, discovery (namespace/capability/tags), versioning, HTTP execution with credential injection (api_key / bearer / oauth2 / basic) and per-tool timeout + response-size limits, async execution with task polling (Listing 6.16), MCP server registration over streamable HTTP with per-server policy overrides (Listing 6.18), circuit breaker, credential store
 - **Guardrails Service** (Chapter 6): Input validation (prompt injection, PII), output filtering (PII redaction), policy enforcement, violation reporting
-- **API Gateway**: gRPC proxy with service discovery (sessions, models, data, tools, guardrails); sync client to backends (tools/guardrails use grpc.aio servers, compatible at the wire level)
+- **API Gateway**: gRPC proxy with service discovery (sessions, models, data, tools, guardrails, workflow); sync client to backends (tools/guardrails use grpc.aio servers, compatible at the wire level); HTTP forwarding to workflow containers (sync / SSE / 202+poll); `/jobs/{id}` proxy to Workflow Service; route table re-hydrates from `WorkflowService.ListRoutes` on startup
+- **Workflow Service** (Chapter 8): `@workflow` decorator, FastAPI runtime server (sync / stream / async handlers), gRPC RetryInterceptor, workflow composition (`call`/`call_parallel`), `genai-platform deploy` CLI that builds Docker images and generates Kubernetes manifests
 - Observability & Experimentation (Chapter 7): planned -- traces, spans, structured logging, experimentation
-- Workflow Service (Chapter 8): planned -- runtime server, async jobs, container deployment
 - AI Assistant (Chapter 9): planned -- agent loop, memory, knowledge, tools, safety, observability

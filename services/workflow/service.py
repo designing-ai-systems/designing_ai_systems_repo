@@ -16,12 +16,20 @@ Book: "Designing AI Systems" (https://www.manning.com/books/designing-ai-systems
     commit 2 calls into these CreateJob/Update/Complete RPCs)
 """
 
+import logging
+import os
 from typing import Dict, Optional
 
 import grpc
 
 from proto import workflow_pb2, workflow_pb2_grpc
 from services.shared.servicer_base import BaseServicer
+from services.workflow.deployer import (
+    Deployer,
+    DockerDeployer,
+    HttpRoutePusher,
+    RoutePusher,
+)
 from services.workflow.jobs_store import InMemoryJobStore, JobStore
 from services.workflow.models import (
     ReliabilityConfig,
@@ -36,21 +44,29 @@ from services.workflow.store import (
     create_registry,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class WorkflowServiceImpl(workflow_pb2_grpc.WorkflowServiceServicer, BaseServicer):
     def __init__(
         self,
         registry: Optional[WorkflowRegistry] = None,
         jobs: Optional[JobStore] = None,
+        deployer: Optional[Deployer] = None,
+        route_pusher: Optional[RoutePusher] = None,
     ) -> None:
         self.registry = registry or InMemoryWorkflowRegistry()
         self.jobs = jobs or InMemoryJobStore()
-        # Workflow_id -> latest deployment record. Commit 3 layers real
-        # subprocess management on top of this dict.
+        self.deployer = deployer or DockerDeployer()
+        self.route_pusher = route_pusher or HttpRoutePusher(
+            gateway_http_url=os.environ.get("GENAI_GATEWAY_HTTP_URL", "http://localhost:8080")
+        )
         self._deployments: Dict[str, WorkflowDeployment] = {}
-        # api_path -> endpoint. Workflow Service tracks routes locally so
-        # the gateway can re-hydrate via ListRoutes (or, for now, by reading
-        # this map after restarts during demos).
+        # workflow_id -> running container id (so RollbackWorkflow can stop it).
+        self._containers: Dict[str, str] = {}
+        # api_path -> endpoint. Workflow Service is the source of truth; the
+        # gateway re-hydrates from `ListRoutes` on startup and gets push
+        # updates via the gateway's `/__platform/register-route` endpoint.
         self._routes: Dict[str, str] = {}
         # name -> workflow_id. Cached so DeployWorkflow can resolve the spec
         # by id without scanning the registry.
@@ -172,10 +188,16 @@ class WorkflowServiceImpl(workflow_pb2_grpc.WorkflowServiceServicer, BaseService
         return self.registry.get(name)
 
     def DeployWorkflow(self, request, context):
-        """Commit-1 implementation: records deployment metadata only.
+        """Run the workflow's container, wait for it to be ready, register the route.
 
-        Commit 3 replaces the body with real `docker run` + health polling
-        + `RegisterRoute` call to the gateway.
+        Sequence (chapter 8 Deploy walkthrough, phases 5-6):
+          1. Resolve the workflow spec by id.
+          2. Stop any prior container running this workflow.
+          3. Run the new image via the injected ``Deployer`` (Docker by default).
+          4. Poll ``/health/ready`` until 200 or timeout.
+          5. Update the local deployment + route maps.
+          6. Push the (api_path, endpoint) pair to the gateway so external
+             HTTP requests start landing on the new container.
         """
         spec = self._resolve_workflow(request.workflow_id)
         if spec is None:
@@ -183,16 +205,48 @@ class WorkflowServiceImpl(workflow_pb2_grpc.WorkflowServiceServicer, BaseService
             context.set_details(f"Workflow id '{request.workflow_id}' not found")
             return workflow_pb2.DeployWorkflowResponse()
 
+        version = request.version or spec.version
+
+        previous_container = self._containers.get(request.workflow_id)
+        if previous_container:
+            try:
+                self.deployer.stop(previous_container)
+            except Exception:  # noqa: BLE001 — best-effort cleanup
+                logger.exception("failed to stop previous container %s", previous_container)
+
+        try:
+            result = self.deployer.deploy(
+                image=spec.container_image or f"genai-workflow/{spec.name}:latest",
+                name=spec.name,
+                gateway_url=os.environ.get(
+                    "GENAI_CONTAINER_GATEWAY_URL", "host.docker.internal:50051"
+                ),
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.exception("docker deploy for %s failed", spec.name)
+            context.set_code(grpc.StatusCode.INTERNAL)
+            context.set_details(f"deploy failed: {e}")
+            return workflow_pb2.DeployWorkflowResponse()
+
+        ready = self.deployer.wait_until_ready(host_port=result.host_port, timeout_seconds=30.0)
+        endpoint = f"localhost:{result.host_port}"
+
         deployment = WorkflowDeployment(
             workflow_id=request.workflow_id,
-            deployment_id=f"{spec.name}-v{request.version or spec.version}",
-            version=request.version or spec.version,
-            status="deploying",
-            current_replicas=0,
+            deployment_id=f"{spec.name}-v{version}",
+            version=version,
+            status="healthy" if ready else "failed",
+            current_replicas=1 if ready else 0,
             desired_replicas=spec.scaling.min_replicas,
-            healthy_endpoints=[],
+            healthy_endpoints=[endpoint] if ready else [],
         )
         self._deployments[request.workflow_id] = deployment
+        self._containers[request.workflow_id] = result.container_id
+
+        if ready:
+            self._routes[spec.api_path] = endpoint
+            self.route_pusher.push(spec.api_path, endpoint)
+
         return workflow_pb2.DeployWorkflowResponse(deployment=self._deployment_to_proto(deployment))
 
     def GetDeploymentStatus(self, request, context):
@@ -217,11 +271,16 @@ class WorkflowServiceImpl(workflow_pb2_grpc.WorkflowServiceServicer, BaseService
 
     def RegisterRoute(self, request, context):
         """Workflow Service records the route locally; commit 3 also pushes it
-        to the gateway. The gateway re-hydrates from `routes()` on startup
-        (Routing model and storage section of the chapter-8 plan).
+        to the gateway. The gateway re-hydrates via `ListRoutes` on startup.
         """
         self._routes[request.api_path] = request.endpoint
         return workflow_pb2.RegisterRouteResponse(success=True)
+
+    def ListRoutes(self, request, context):
+        """Source of truth for the gateway's routing-table re-hydration."""
+        return workflow_pb2.ListRoutesResponse(
+            routes=[workflow_pb2.Route(api_path=p, endpoint=e) for p, e in self._routes.items()]
+        )
 
     def routes(self) -> Dict[str, str]:
         """Test/inspection accessor for the registered routes."""

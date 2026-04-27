@@ -101,6 +101,12 @@ class WorkflowHTTPHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         api_path = self.path
+        # Internal endpoint: Workflow Service pushes new (api_path, endpoint)
+        # mappings here after a successful deploy. Documented as a gateway-
+        # internal contract; not for external clients.
+        if api_path == "/__platform/register-route":
+            self._handle_register_route()
+            return
         try:
             target_addr = self.registry.get_workflow_address(api_path)
         except ValueError:
@@ -137,6 +143,25 @@ class WorkflowHTTPHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(buffered)))
             self.end_headers()
             self.wfile.write(buffered)
+
+    def _handle_register_route(self) -> None:
+        """Workflow Service → gateway push: ``{"api_path": ..., "endpoint": ...}``.
+
+        Internal-only (no external auth in the demo); matches the routing
+        model in chapter 8: source of truth is the Workflow Service, the
+        gateway holds a fast local cache populated by push.
+        """
+        content_length = int(self.headers.get("Content-Length", "0") or "0")
+        body = self.rfile.read(content_length) if content_length > 0 else b""
+        try:
+            payload = json.loads(body)
+            api_path = payload["api_path"]
+            endpoint = payload["endpoint"]
+        except (KeyError, json.JSONDecodeError) as e:
+            self._send_json({"error": f"bad payload: {e}"}, status=400)
+            return
+        self.registry.register_workflow(api_path, endpoint)
+        self._send_json({"success": True}, status=200)
 
     def _stream_through(self, upstream: httpx.Response) -> None:
         """Write SSE chunks to the external client as they arrive upstream."""
