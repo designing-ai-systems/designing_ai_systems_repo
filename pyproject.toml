@@ -14,6 +14,12 @@ dependencies = [
     "protobuf>=4.25.0",
     "httpx>=0.27.0",
     "mcp>=1.0",
+    # Model Service provider SDKs. The corresponding ModelProvider /
+    # EmbeddingProvider modules import these at module-import time, so
+    # every install path (local dev, docker compose images, CI) needs
+    # them — not optional extras.
+    "openai>=1.50.0",
+    "anthropic>=0.40.0",
     # Chapter 8: SDK runtime server inside per-workflow containers (Listings
     # 8.3-8.12) and the FastAPI app used by the gateway-side /jobs proxy.
     "fastapi>=0.110.0",
