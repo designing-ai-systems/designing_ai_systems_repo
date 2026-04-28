@@ -1,19 +1,19 @@
 """
 Workflow Service — gRPC servicer (sync, follows the sessions/data pattern).
 
-Thin translation layer: receives proto requests, delegates to
-WorkflowRegistry / JobStore / a deployment dict, returns proto responses.
+Pure bookkeeping service. In production (per chapter 8) the Workflow
+Service drives deployments via the Kubernetes API. In our local Docker
+demo we don't have Kubernetes, so the developer's CLI runs ``docker run``
+on the host and the Workflow Service receives ``container_id`` +
+``endpoint`` back via ``DeployWorkflow``, verifies ``/health/ready``,
+stores the deployment record, and pushes the route to the gateway. This
+keeps the service container free of any privileged Docker access —
+nothing mounted, no docker CLI installed.
 
-In commit 1 the deployment work is metadata-only — `DeployWorkflow` records
-a `WorkflowDeployment` row but does not actually run any container. Commit 3
-replaces the body of `DeployWorkflow` with real `docker run` + health-check
-polling + a `RegisterRoute` call to the gateway.
-
-Book: "Designing AI Systems" (https://www.manning.com/books/designing-ai-systems)
+Book: "Designing AI Systems"
   - Listing 8.21: WorkflowService gRPC contract
   - Listings 8.22–8.23: registry + deployment + job message types
-  - Listing 8.10: /jobs/{job_id} polling endpoint (the runtime server in
-    commit 2 calls into these CreateJob/Update/Complete RPCs)
+  - Listing 8.10: /jobs/{job_id} polling endpoint
 """
 
 import logging
@@ -24,12 +24,6 @@ import grpc
 
 from proto import workflow_pb2, workflow_pb2_grpc
 from services.shared.servicer_base import BaseServicer
-from services.workflow.deployer import (
-    Deployer,
-    DockerDeployer,
-    HttpRoutePusher,
-    RoutePusher,
-)
 from services.workflow.jobs_store import InMemoryJobStore, JobStore
 from services.workflow.models import (
     ReliabilityConfig,
@@ -38,6 +32,7 @@ from services.workflow.models import (
     WorkflowDeployment,
     WorkflowSpec,
 )
+from services.workflow.route_pusher import HttpRoutePusher, RoutePusher
 from services.workflow.store import (
     InMemoryWorkflowRegistry,
     WorkflowRegistry,
@@ -48,13 +43,28 @@ logger = logging.getLogger(__name__)
 
 
 def _default_route_health_check(endpoint: str) -> bool:
-    """Probe `http://<endpoint>/health/ready`. Returns True iff 200."""
+    """Probe `http://<endpoint>/health/ready`. Returns True iff 200.
+
+    Used both by ``DeployWorkflow`` (to verify the CLI-launched container
+    came up) and by ``ListRoutes`` (to prune routes whose containers have
+    disappeared since registration). Configurable via the ``route_health_check``
+    constructor arg so tests can substitute a deterministic callable.
+    """
+    import time
+
     import httpx
 
-    try:
-        return httpx.get(f"http://{endpoint}/health/ready", timeout=0.5).status_code == 200
-    except httpx.RequestError:
-        return False
+    # Slightly more forgiving than the prune-step probe so DeployWorkflow
+    # can wait for a freshly-started container to come up on first try.
+    deadline = time.time() + 30.0
+    while time.time() < deadline:
+        try:
+            if httpx.get(f"http://{endpoint}/health/ready", timeout=2.0).status_code == 200:
+                return True
+        except httpx.RequestError:
+            pass
+        time.sleep(0.5)
+    return False
 
 
 class WorkflowServiceImpl(workflow_pb2_grpc.WorkflowServiceServicer, BaseServicer):
@@ -62,13 +72,11 @@ class WorkflowServiceImpl(workflow_pb2_grpc.WorkflowServiceServicer, BaseService
         self,
         registry: Optional[WorkflowRegistry] = None,
         jobs: Optional[JobStore] = None,
-        deployer: Optional[Deployer] = None,
         route_pusher: Optional[RoutePusher] = None,
         route_health_check=None,
     ) -> None:
         self.registry = registry or InMemoryWorkflowRegistry()
         self.jobs = jobs or InMemoryJobStore()
-        self.deployer = deployer or DockerDeployer()
         self.route_pusher = route_pusher or HttpRoutePusher(
             gateway_http_url=os.environ.get("GENAI_GATEWAY_HTTP_URL", "http://localhost:8080")
         )
@@ -76,7 +84,9 @@ class WorkflowServiceImpl(workflow_pb2_grpc.WorkflowServiceServicer, BaseService
         # production keeps the default httpx-based check.
         self._route_health_check = route_health_check or _default_route_health_check
         self._deployments: Dict[str, WorkflowDeployment] = {}
-        # workflow_id -> running container id (so RollbackWorkflow can stop it).
+        # workflow_id -> running container id reported by the CLI. Kept so
+        # RollbackWorkflow can identify the container the CLI most recently
+        # launched (the actual stop/start is the CLI's responsibility).
         self._containers: Dict[str, str] = {}
         # api_path -> endpoint. Workflow Service is the source of truth; the
         # gateway re-hydrates from `ListRoutes` on startup and gets push
@@ -202,16 +212,22 @@ class WorkflowServiceImpl(workflow_pb2_grpc.WorkflowServiceServicer, BaseService
         return self.registry.get(name)
 
     def DeployWorkflow(self, request, context):
-        """Run the workflow's container, wait for it to be ready, register the route.
+        """Verify the CLI-launched container is healthy, then register the route.
 
-        Sequence (chapter 8 Deploy walkthrough, phases 5-6):
-          1. Resolve the workflow spec by id.
-          2. Stop any prior container running this workflow.
-          3. Run the new image via the injected ``Deployer`` (Docker by default).
-          4. Poll ``/health/ready`` until 200 or timeout.
-          5. Update the local deployment + route maps.
-          6. Push the (api_path, endpoint) pair to the gateway so external
-             HTTP requests start landing on the new container.
+        The CLI ran ``docker run`` already and reports back ``container_id``
+        + ``endpoint`` in this request. We do the bookkeeping the chapter
+        ascribes to the Workflow Service:
+
+          1. Resolve the workflow spec.
+          2. Health-check the endpoint the CLI gave us (it's reachable from
+             us — workflow service and the new container are on the same
+             docker network).
+          3. Store the deployment record and remember the container id.
+          4. Push the route (api_path → endpoint) to the gateway so
+             external HTTP requests start landing on the new container.
+
+        The Workflow Service never invokes ``docker run`` itself — that
+        privileged operation belongs to the CLI on the developer's host.
         """
         spec = self._resolve_workflow(request.workflow_id)
         if spec is None:
@@ -219,46 +235,23 @@ class WorkflowServiceImpl(workflow_pb2_grpc.WorkflowServiceServicer, BaseService
             context.set_details(f"Workflow id '{request.workflow_id}' not found")
             return workflow_pb2.DeployWorkflowResponse()
 
-        version = request.version or spec.version
-
-        previous_container = self._containers.get(request.workflow_id)
-        if previous_container:
-            try:
-                self.deployer.stop(previous_container)
-            except Exception:  # noqa: BLE001 — best-effort cleanup
-                logger.exception("failed to stop previous container %s", previous_container)
-
-        try:
-            result = self.deployer.deploy(
-                image=spec.container_image or f"genai-workflow/{spec.name}:latest",
-                name=spec.name,
-                gateway_url=os.environ.get(
-                    "GENAI_CONTAINER_GATEWAY_URL", "host.docker.internal:50051"
-                ),
+        if not request.endpoint:
+            context.set_code(grpc.StatusCode.INVALID_ARGUMENT)
+            context.set_details(
+                "DeployWorkflow requires `endpoint` (set by the CLI after `docker run`)"
             )
-        except Exception as e:  # noqa: BLE001
-            logger.exception("docker deploy for %s failed", spec.name)
-            context.set_code(grpc.StatusCode.INTERNAL)
-            context.set_details(f"deploy failed: {e}")
             return workflow_pb2.DeployWorkflowResponse()
 
-        ready = self.deployer.wait_until_ready(endpoint=result.endpoint, timeout_seconds=30.0)
-        endpoint = result.endpoint
+        version = request.version or spec.version
+        endpoint = request.endpoint
+        # Reuse the same injectable health check the prune step uses; tests
+        # pass `lambda _: True/False` to control verification deterministically.
+        ready = self._route_health_check(endpoint)
 
         if not ready:
-            # Surface the container's stderr/stdout so the operator can see
-            # why /health/ready never came up (most often: import error in
-            # the workflow source file). The CLI prints the error details.
-            logs = self.deployer.container_logs(result.container_id)
-            if logs:
-                logger.error(
-                    "workflow %s failed health check; container logs:\n%s",
-                    spec.name,
-                    logs,
-                )
             context.set_details(
-                f"Workflow '{spec.name}' container failed /health/ready.\n"
-                f"--- last container log lines ---\n{logs or '(no logs available)'}"
+                f"Workflow '{spec.name}' at {endpoint} did not respond on /health/ready. "
+                f"Check `docker logs {request.container_id}` for details."
             )
 
         deployment = WorkflowDeployment(
@@ -271,7 +264,8 @@ class WorkflowServiceImpl(workflow_pb2_grpc.WorkflowServiceServicer, BaseService
             healthy_endpoints=[endpoint] if ready else [],
         )
         self._deployments[request.workflow_id] = deployment
-        self._containers[request.workflow_id] = result.container_id
+        if request.container_id:
+            self._containers[request.workflow_id] = request.container_id
 
         if ready:
             self._routes[spec.api_path] = endpoint

@@ -6,15 +6,23 @@ import grpc
 import pytest
 
 from proto import workflow_pb2
-from services.workflow.deployer import FakeDeployer, FakeRoutePusher
+from services.workflow.route_pusher import FakeRoutePusher
 from services.workflow.service import WorkflowServiceImpl
 
+_ = FakeRoutePusher  # silence unused-import linters; used in fixtures below
 
-def _svc(deployer=None, route_pusher=None):
-    """Construct a WorkflowServiceImpl with fake deploy infrastructure."""
+
+def _svc(route_pusher=None, route_health_check=None):
+    """Construct a WorkflowServiceImpl with fake route infrastructure.
+
+    DeployWorkflow expects the CLI to have already run the container, so
+    the test harness wires in a route-health-check callable that returns
+    True (simulating a healthy CLI-launched container). The real network
+    probe is bypassed.
+    """
     return WorkflowServiceImpl(
-        deployer=deployer or FakeDeployer(),
         route_pusher=route_pusher or FakeRoutePusher(),
+        route_health_check=route_health_check or (lambda _endpoint: True),
     )
 
 
@@ -131,68 +139,105 @@ class TestUpdateAndDelete:
 
 
 class TestDeployWorkflow:
+    """DeployWorkflow now expects the CLI to have already run the container
+    and to pass back ``container_id`` + ``endpoint``. The Workflow Service
+    just verifies and registers the route — no docker work."""
+
     def test_healthy_deploy_records_endpoint_and_pushes_route(self):
-        deployer = FakeDeployer(endpoint="fake-host:18001")
         pusher = FakeRoutePusher()
-        svc = _svc(deployer=deployer, route_pusher=pusher)
+        svc = _svc(route_pusher=pusher, route_health_check=lambda _e: True)
         reg = svc.RegisterWorkflow(
             workflow_pb2.RegisterWorkflowRequest(spec=_make_spec(name="w", api_path="/p")),
             FakeContext(),
         )
         resp = svc.DeployWorkflow(
-            workflow_pb2.DeployWorkflowRequest(workflow_id=reg.workflow_id, version=1),
+            workflow_pb2.DeployWorkflowRequest(
+                workflow_id=reg.workflow_id,
+                version=1,
+                container_id="abc123",
+                endpoint="genai-workflow-w:8000",
+            ),
             FakeContext(),
         )
         d = resp.deployment
         assert d.status == "healthy"
-        assert list(d.healthy_endpoints) == ["fake-host:18001"]
-        # Deployer was called with the expected name + image.
-        assert len(deployer.deployed) == 1
-        assert deployer.deployed[0]["name"] == "w"
+        assert list(d.healthy_endpoints) == ["genai-workflow-w:8000"]
         # Route was both stored locally and pushed to the gateway.
-        assert svc.routes()["/p"] == "fake-host:18001"
-        assert pusher.pushed == [("/p", "fake-host:18001")]
+        assert svc.routes()["/p"] == "genai-workflow-w:8000"
+        assert pusher.pushed == [("/p", "genai-workflow-w:8000")]
 
     def test_unhealthy_deploy_does_not_register_route(self):
-        deployer = FakeDeployer()
-        deployer.ready_returns = False
         pusher = FakeRoutePusher()
-        svc = _svc(deployer=deployer, route_pusher=pusher)
+        svc = _svc(route_pusher=pusher, route_health_check=lambda _e: False)
         reg = svc.RegisterWorkflow(
             workflow_pb2.RegisterWorkflowRequest(spec=_make_spec(name="w", api_path="/p")),
             FakeContext(),
         )
         resp = svc.DeployWorkflow(
-            workflow_pb2.DeployWorkflowRequest(workflow_id=reg.workflow_id, version=1),
+            workflow_pb2.DeployWorkflowRequest(
+                workflow_id=reg.workflow_id,
+                version=1,
+                container_id="abc123",
+                endpoint="genai-workflow-w:8000",
+            ),
             FakeContext(),
         )
         assert resp.deployment.status == "failed"
         assert svc.routes() == {}
         assert pusher.pushed == []
 
-    def test_redeploy_stops_previous_container(self):
-        deployer = FakeDeployer()
-        svc = _svc(deployer=deployer)
+    def test_redeploy_overwrites_recorded_container(self):
+        svc = _svc()
+        reg = svc.RegisterWorkflow(
+            workflow_pb2.RegisterWorkflowRequest(spec=_make_spec(name="w", api_path="/p")),
+            FakeContext(),
+        )
+        svc.DeployWorkflow(
+            workflow_pb2.DeployWorkflowRequest(
+                workflow_id=reg.workflow_id,
+                version=1,
+                container_id="first",
+                endpoint="genai-workflow-w:8000",
+            ),
+            FakeContext(),
+        )
+        svc.DeployWorkflow(
+            workflow_pb2.DeployWorkflowRequest(
+                workflow_id=reg.workflow_id,
+                version=2,
+                container_id="second",
+                endpoint="genai-workflow-w:8000",
+            ),
+            FakeContext(),
+        )
+        # Service tracks the most recent CLI-launched container (the CLI
+        # itself is responsible for stopping the previous one).
+        assert svc._containers[reg.workflow_id] == "second"
+
+    def test_missing_endpoint_is_invalid_argument(self):
+        svc = _svc()
         reg = svc.RegisterWorkflow(
             workflow_pb2.RegisterWorkflowRequest(spec=_make_spec(name="w")),
             FakeContext(),
         )
+        ctx = FakeContext()
         svc.DeployWorkflow(
             workflow_pb2.DeployWorkflowRequest(workflow_id=reg.workflow_id, version=1),
-            FakeContext(),
+            ctx,
         )
-        svc.DeployWorkflow(
-            workflow_pb2.DeployWorkflowRequest(workflow_id=reg.workflow_id, version=2),
-            FakeContext(),
-        )
-        # Second deploy should have stopped the first container.
-        assert deployer.stopped == ["fake-w"]
+        assert ctx.code == grpc.StatusCode.INVALID_ARGUMENT
 
     def test_unknown_workflow_returns_not_found(self):
         svc = _svc()
         ctx = FakeContext()
         svc.DeployWorkflow(
-            workflow_pb2.DeployWorkflowRequest(workflow_id="does-not-exist", version=1), ctx
+            workflow_pb2.DeployWorkflowRequest(
+                workflow_id="does-not-exist",
+                version=1,
+                container_id="x",
+                endpoint="x:1",
+            ),
+            ctx,
         )
         assert ctx.code == grpc.StatusCode.NOT_FOUND
 
@@ -204,7 +249,12 @@ class TestGetDeploymentStatus:
             workflow_pb2.RegisterWorkflowRequest(spec=_make_spec(name="w")), FakeContext()
         )
         svc.DeployWorkflow(
-            workflow_pb2.DeployWorkflowRequest(workflow_id=reg.workflow_id, version=1),
+            workflow_pb2.DeployWorkflowRequest(
+                workflow_id=reg.workflow_id,
+                version=1,
+                container_id="abc",
+                endpoint="genai-workflow-w:8000",
+            ),
             FakeContext(),
         )
         resp = svc.GetDeploymentStatus(

@@ -9,20 +9,6 @@ startup to pick the right request handler (sync / stream / async).
 
 Book: "Designing AI Systems" — Listing 8.2.
 
-Field schema diverges from the manuscript draft of Listing 8.2 — this
-implementation uses flat keyword arguments instead of nested ``autoscaling_config`` /
-``deployment_config`` dicts. Reasons documented in
-``chapters/book_discrepancies_chapter8.md`` (#1):
-
-- discoverability and type safety: each kwarg has a name, default and
-  checked type; dict keys silently swallow typos and break IDE
-  autocomplete.
-- no pass-through benefit: nothing in the deploy CLI or runtime server
-  treats these as opaque blobs; both pluck specific fields out.
-- if the parameter list ever grows enough to need grouping, the right
-  next step is a typed ``ScalingConfig``/``ResourceConfig`` dataclass,
-  not a free-form dict.
-
 Example::
 
     @workflow(

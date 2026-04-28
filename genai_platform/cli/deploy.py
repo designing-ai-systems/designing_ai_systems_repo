@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import os
 import shutil
 import subprocess
 import sys
@@ -36,6 +37,8 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 import yaml
+
+from genai_platform.cli.docker_runner import DockerDeployer, _detect_compose_network
 
 DEFAULT_GATEWAY_URL = "localhost:50051"
 DEFAULT_GATEWAY_HTTP_URL = "http://localhost:8080"
@@ -340,11 +343,39 @@ def deploy_workflow(
     print(f"  registered (workflow_id={reg.workflow_id}, version={reg.version})")
 
     if skip_build:
-        print("  --no-build: skipping DeployWorkflow (no image to run)")
+        print("  --no-build: skipping `docker run` and DeployWorkflow")
         return
 
+    # CLI runs `docker run` itself — the Workflow Service has no docker
+    # access. Then it reports the resulting container_id + endpoint to the
+    # service via DeployWorkflow, which verifies /health/ready and
+    # registers the route with the gateway.
+    #
+    # Pick the right gateway URL for the new container based on whether the
+    # platform is running under docker compose or as bare host processes:
+    #   - compose detected → container can resolve `gateway:50051` via DNS
+    #   - host mode        → container reaches the host via host.docker.internal
+    explicit = os.environ.get("GENAI_CONTAINER_GATEWAY_URL")
+    if explicit:
+        container_gateway_url = explicit
+    elif _detect_compose_network():
+        container_gateway_url = "gateway:50051"
+    else:
+        container_gateway_url = "host.docker.internal:50051"
+    print("  launching container…")
+    runner = DockerDeployer()
+    try:
+        result = runner.deploy(
+            image=image_tag,
+            name=item.metadata["name"],
+            gateway_url=container_gateway_url,
+        )
+    except RuntimeError as e:
+        raise SystemExit(f"  docker run failed: {e}") from e
+    print(f"  container started (id={result.container_id[:12]}, endpoint={result.endpoint})")
+
     deploy_call = platform.workflows._stub.DeployWorkflow.with_call(
-        _deploy_request(reg.workflow_id, reg.version),
+        _deploy_request(reg.workflow_id, reg.version, result.container_id, result.endpoint),
         metadata=platform.workflows._metadata,
     )
     deploy, call = deploy_call
@@ -352,12 +383,15 @@ def deploy_workflow(
     print(f"  deployed (status={d.status}, endpoints={list(d.healthy_endpoints)})")
 
     if d.status != "healthy":
-        # Workflow Service stuffs container logs into trailing details on
-        # failure. Surface them so the user sees what crashed.
         details = call.details() or ""
         if details:
             print("\n  Deploy FAILED. Diagnostic from Workflow Service:")
             print("  " + details.replace("\n", "\n  "))
+        # Surface container logs from the host (the CLI has docker access).
+        logs = runner.container_logs(result.container_id)
+        if logs:
+            print("\n  Last container log lines:")
+            print("  " + logs.replace("\n", "\n  "))
         return
 
     print(f"\nTry: curl -X POST {DEFAULT_GATEWAY_HTTP_URL}{item.metadata['api_path']} \\")
@@ -397,10 +431,15 @@ def _register_request(spec):
     return workflow_pb2.RegisterWorkflowRequest(spec=spec)
 
 
-def _deploy_request(workflow_id: str, version: int):
+def _deploy_request(workflow_id: str, version: int, container_id: str, endpoint: str):
     from proto import workflow_pb2
 
-    return workflow_pb2.DeployWorkflowRequest(workflow_id=workflow_id, version=version)
+    return workflow_pb2.DeployWorkflowRequest(
+        workflow_id=workflow_id,
+        version=version,
+        container_id=container_id,
+        endpoint=endpoint,
+    )
 
 
 # ---- CLI entry point -------------------------------------------------------

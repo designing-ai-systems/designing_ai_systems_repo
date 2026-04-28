@@ -93,19 +93,10 @@ services:
       dockerfile: docker/workflow.Dockerfile
     image: genai-platform/workflow:dev
     environment:
-      # Compose mode: new workflow containers share this network so the
-      # gateway can reach them by container name without a host port map.
-      WORKFLOW_DOCKER_NETWORK: genai-platform_default
-      # Workflow containers reach the gateway via DNS, not host.docker.internal.
-      GENAI_CONTAINER_GATEWAY_URL: gateway:50051
-      # The route_pusher's POST /__platform/register-route target.
+      # Where the route_pusher sends the (api_path, endpoint) update after
+      # a successful deploy. This service has no docker access; the CLI on
+      # the host runs `docker run` and reports back via DeployWorkflow.
       GENAI_GATEWAY_HTTP_URL: http://gateway:8080
-    volumes:
-      # Required for `docker run` to land on the host's docker daemon.
-      # Trade-off: the workflow service can effectively control the host's
-      # docker. Acceptable for the book demo; production would replace
-      # this with a Kubernetes API client + RBAC.
-      - /var/run/docker.sock:/var/run/docker.sock
 
   gateway:
     build:

@@ -14,18 +14,31 @@ from collections import namedtuple
 
 import pytest
 
-from services.workflow import deployer as deployer_mod
-from services.workflow.deployer import DockerDeployer
+from genai_platform.cli import docker_runner as deployer_mod
+from genai_platform.cli.docker_runner import DockerDeployer
 
 CompletedProcessLike = namedtuple("CompletedProcessLike", ("returncode", "stdout", "stderr"))
 
 
-def _patch_docker_runs(monkeypatch, *, container_id: str = "abc123"):
-    """Capture every subprocess.run call into ``calls`` and pretend `docker run` succeeded."""
+def _patch_docker_runs(
+    monkeypatch,
+    *,
+    container_id: str = "abc123",
+    compose_network_exists: bool = False,
+):
+    """Capture every subprocess.run call into ``calls`` and script docker responses.
+
+    `docker network inspect` returns rc=0 iff ``compose_network_exists``;
+    everything else (rm, run, etc.) succeeds and emits the canned container
+    id on stdout.
+    """
     calls: list[list[str]] = []
 
     def fake_run(cmd, *args, **kwargs):
         calls.append(list(cmd))
+        if list(cmd[:3]) == ["docker", "network", "inspect"]:
+            rc = 0 if compose_network_exists else 1
+            return CompletedProcessLike(returncode=rc, stdout="", stderr="")
         return CompletedProcessLike(returncode=0, stdout=container_id + "\n", stderr="")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
@@ -34,10 +47,19 @@ def _patch_docker_runs(monkeypatch, *, container_id: str = "abc123"):
     return calls
 
 
+def _docker_run_cmd(calls: list[list[str]]) -> list[str]:
+    """Pick the actual ``docker run`` invocation out of the recorded calls."""
+    for cmd in calls:
+        if cmd[:3] == ["docker", "run", "-d"]:
+            return cmd
+    raise AssertionError(f"no docker-run call in {calls}")
+
+
 class TestHostMode:
     def test_picks_host_port_and_uses_localhost_endpoint(self, monkeypatch):
+        """No env var, no compose network detected → host mode."""
         monkeypatch.delenv("WORKFLOW_DOCKER_NETWORK", raising=False)
-        calls = _patch_docker_runs(monkeypatch)
+        calls = _patch_docker_runs(monkeypatch, compose_network_exists=False)
 
         result = DockerDeployer().deploy(
             image="genai-workflow/x:latest",
@@ -45,23 +67,17 @@ class TestHostMode:
             gateway_url="host.docker.internal:50051",
         )
 
-        # The second subprocess call is the actual `docker run`.
-        run_cmd = calls[1]
-        assert run_cmd[:3] == ["docker", "run", "-d"]
-        # `-p HOST:CONTAINER` flag present, host port is non-zero.
-        assert any(arg.startswith("-p") or "/" not in arg for arg in run_cmd)
+        run_cmd = _docker_run_cmd(calls)
         port_idx = run_cmd.index("-p")
         host_port = int(run_cmd[port_idx + 1].split(":")[0])
         assert host_port > 0
-        # No --network flag.
         assert "--network" not in run_cmd
-        # Endpoint reflects host port.
         assert result.endpoint == f"localhost:{host_port}"
         assert result.container_id == "abc123"
 
 
 class TestComposeMode:
-    def test_attaches_to_compose_network_and_uses_container_name_endpoint(self, monkeypatch):
+    def test_explicit_env_var_picks_compose_mode(self, monkeypatch):
         monkeypatch.setenv("WORKFLOW_DOCKER_NETWORK", "genai-platform_default")
         calls = _patch_docker_runs(monkeypatch)
 
@@ -71,20 +87,31 @@ class TestComposeMode:
             gateway_url="gateway:50051",
         )
 
-        run_cmd = calls[1]
-        # --network attaches the new container to the compose network.
+        run_cmd = _docker_run_cmd(calls)
         assert "--network" in run_cmd
-        net_idx = run_cmd.index("--network")
-        assert run_cmd[net_idx + 1] == "genai-platform_default"
-        # No host port mapping in compose mode.
+        assert run_cmd[run_cmd.index("--network") + 1] == "genai-platform_default"
         assert "-p" not in run_cmd
-        # No host.docker.internal hack — container reaches the gateway by DNS.
         assert "host.docker.internal:host-gateway" not in run_cmd
-        # Endpoint is the container's stable name + the runtime port.
         assert result.endpoint == "genai-workflow-x:8000"
-        # Gateway URL is plumbed through to the container's env.
         env_args = [a for i, a in enumerate(run_cmd) if i > 0 and run_cmd[i - 1] == "-e"]
         assert "GENAI_GATEWAY_URL=gateway:50051" in env_args
+
+    def test_auto_detected_compose_network(self, monkeypatch):
+        """No env var, but `docker network inspect genai-platform_default` says
+        the network exists → CLI auto-detects and uses compose mode."""
+        monkeypatch.delenv("WORKFLOW_DOCKER_NETWORK", raising=False)
+        calls = _patch_docker_runs(monkeypatch, compose_network_exists=True)
+
+        result = DockerDeployer().deploy(
+            image="genai-workflow/x:latest",
+            name="x",
+            gateway_url="gateway:50051",
+        )
+
+        run_cmd = _docker_run_cmd(calls)
+        assert "--network" in run_cmd
+        assert run_cmd[run_cmd.index("--network") + 1] == "genai-platform_default"
+        assert result.endpoint == "genai-workflow-x:8000"
 
 
 class TestStopAndCleanup:

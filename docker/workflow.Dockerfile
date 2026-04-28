@@ -1,22 +1,16 @@
 # Workflow Service container.
 #
-# Slightly heavier than the other platform services because the Workflow
-# Service shells out to ``docker run`` to launch new workflow containers
-# (chapter 8 ``DeployWorkflow``). For that to work inside compose, the
-# image needs the docker CLI and the host's docker socket needs to be
-# mounted in (``docker-compose.yml`` does the mount).
-#
-# When `WORKFLOW_DOCKER_NETWORK` is set in compose, the deployer attaches
-# new workflow containers to the same compose network so the gateway can
-# reach them by name without any host port mapping.
+# Pure bookkeeping service — registry, deployment records, async jobs,
+# route push to the gateway. The Workflow Service does NOT shell out to
+# docker; that responsibility lives in the `genai-platform deploy` CLI,
+# which runs on the developer's host where Docker already lives. So this
+# image stays small and unprivileged: no docker CLI, no /var/run/docker.sock
+# mount in compose. See chapters/book_discrepancies_chapter8.md for the
+# rationale (the chapter prescribes the Workflow Service calling the
+# Kubernetes API; for our local Docker demo we put the docker action in
+# the CLI to avoid giving this service privileged access to the host).
 
 FROM python:3.12-slim
-
-# docker.io brings the Docker CLI; we just need the client to talk to the
-# host's docker daemon over the mounted socket. (No daemon runs in here.)
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends docker.io \
-    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 

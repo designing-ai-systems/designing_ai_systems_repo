@@ -1,27 +1,31 @@
 """
-Container deployer used by the Workflow Service's `DeployWorkflow` RPC.
+Docker runner used by ``genai-platform deploy`` to launch workflow containers.
 
-In production this would speak to Kubernetes; for the book demo it shells
-out to ``docker run`` against a locally-built image. The seam is an
-abstract ``Deployer`` interface so tests can inject a fake.
+The CLI runs on the developer's host (where Docker already lives) and is
+the thing that actually invokes ``docker run`` / ``docker rm``. The
+Workflow Service is bookkeeping-only: it stores the spec, verifies the
+container is healthy after the CLI launches it, and pushes the route to
+the gateway.
+
+In production (per chapter 8) the Workflow Service uses the Kubernetes
+API to deploy workflows, with a scoped service account. We don't have a
+Kubernetes cluster in the local-Docker demo, and giving the Workflow
+Service direct Docker access (via a mounted ``/var/run/docker.sock``)
+would grant it effectively root on the host with no scoping. So for the
+demo we keep ``docker run`` on the developer's CLI — which already has
+trusted Docker access — and the Workflow Service stays a pure
+bookkeeping service. The chapter's architecture is unchanged; this is
+just where the demo wires the docker action.
 
 Two operating modes, picked by the ``WORKFLOW_DOCKER_NETWORK`` env var:
 
 - **Host mode** (default — used when running the platform services as
-  bare ``python -m services.X.main`` processes): the deployer picks a
-  free host port, maps the container's :8000 to it, and the endpoint is
-  ``localhost:<host_port>``.
-- **Compose-network mode** (used when the workflow service itself runs
-  inside ``docker compose up``): the deployer attaches new containers to
-  the same compose network and the endpoint is the container's name plus
-  the runtime port (e.g., ``genai-workflow-foo:8000``). The gateway,
-  also on that network, reaches the new container by its DNS name; no
-  host port mapping is needed.
-
-Book: "Designing AI Systems"
-  - Listing 8.23 (Deployment lifecycle messages)
-  - Section 8.7 (Deployment pipeline) — local Docker is the demo
-    simplification of the K8s rolling-update flow described there.
+  bare ``python -m services.X.main`` processes): pick a free host port,
+  map the container's :8000 to it, endpoint is ``localhost:<host_port>``.
+- **Compose-network mode** (used when the platform runs under
+  ``docker compose up``): attach new containers to the same compose
+  network so the gateway reaches them by DNS name. Endpoint is
+  ``<container_name>:8000``; no host port mapping needed.
 """
 
 from __future__ import annotations
@@ -31,11 +35,8 @@ import os
 import shutil
 import socket
 import subprocess
-import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-
-import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -57,10 +58,6 @@ class Deployer(ABC):
         """Run the container for a workflow. Returns its (container_id, endpoint)."""
 
     @abstractmethod
-    def wait_until_ready(self, *, endpoint: str, timeout_seconds: float) -> bool:
-        """Poll `<endpoint>/health/ready` until it responds 200 or `timeout_seconds` elapses."""
-
-    @abstractmethod
     def stop(self, container_id: str) -> None:
         """Stop and remove a previously-deployed container."""
 
@@ -69,10 +66,30 @@ class Deployer(ABC):
         return ""
 
 
+DEFAULT_COMPOSE_NETWORK = "genai-platform_default"
+
+
 def _find_free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("", 0))
         return int(s.getsockname()[1])
+
+
+def _detect_compose_network() -> str | None:
+    """Return the compose network name if the platform stack is up, else None.
+
+    Lets the CLI Just Work whether the user is running platform services
+    via ``docker compose up`` or via bare ``python -m services.X.main``.
+    Explicit ``WORKFLOW_DOCKER_NETWORK`` overrides this detection.
+    """
+    if shutil.which("docker") is None:
+        return None
+    proc = subprocess.run(
+        ["docker", "network", "inspect", DEFAULT_COMPOSE_NETWORK],
+        capture_output=True,
+        text=True,
+    )
+    return DEFAULT_COMPOSE_NETWORK if proc.returncode == 0 else None
 
 
 class DockerDeployer(Deployer):
@@ -102,7 +119,7 @@ class DockerDeployer(Deployer):
             text=True,
         )
 
-        compose_network = os.environ.get("WORKFLOW_DOCKER_NETWORK")
+        compose_network = os.environ.get("WORKFLOW_DOCKER_NETWORK") or _detect_compose_network()
         cmd = [
             "docker",
             "run",
@@ -115,12 +132,9 @@ class DockerDeployer(Deployer):
             f"GENAI_GATEWAY_URL={gateway_url}",
         ]
         if compose_network:
-            # Compose mode: container shares the platform's network. Gateway
-            # reaches it by DNS name; no host port mapping needed.
             cmd += ["--network", compose_network]
             endpoint = f"{container_name}:{RUNTIME_CONTAINER_PORT}"
         else:
-            # Host mode: pick a free host port, map the container's :8000 to it.
             host_port = _find_free_port()
             cmd += [
                 "-p",
@@ -136,24 +150,11 @@ class DockerDeployer(Deployer):
             raise RuntimeError(f"docker run failed: {proc.stderr.strip() or proc.stdout.strip()}")
         return DeployResult(container_id=proc.stdout.strip(), endpoint=endpoint)
 
-    def wait_until_ready(self, *, endpoint: str, timeout_seconds: float = 30.0) -> bool:
-        deadline = time.time() + timeout_seconds
-        while time.time() < deadline:
-            try:
-                r = httpx.get(f"http://{endpoint}/health/ready", timeout=2.0)
-                if r.status_code == 200:
-                    return True
-            except httpx.RequestError:
-                pass
-            time.sleep(0.5)
-        return False
-
     def container_logs(self, container_id: str, tail: int = 30) -> str:
         """Return the last ``tail`` lines of a container's stdout+stderr.
 
-        Used by the Workflow Service to surface why a workflow's
-        ``/health/ready`` never came up (most often: import error in the
-        workflow source file).
+        Used by the CLI to surface why a workflow's ``/health/ready`` never
+        came up (most often: import error in the workflow source file).
         """
         proc = subprocess.run(
             ["docker", "logs", "--tail", str(tail), container_id],
@@ -173,51 +174,10 @@ class FakeDeployer(Deployer):
         self.endpoint = endpoint
         self.deployed: list[dict] = []
         self.stopped: list[str] = []
-        self.ready_returns: bool = True
 
     def deploy(self, *, image: str, name: str, gateway_url: str) -> DeployResult:
         self.deployed.append({"image": image, "name": name, "gateway_url": gateway_url})
         return DeployResult(container_id=f"fake-{name}", endpoint=self.endpoint)
 
-    def wait_until_ready(self, *, endpoint: str, timeout_seconds: float) -> bool:
-        return self.ready_returns
-
     def stop(self, container_id: str) -> None:
         self.stopped.append(container_id)
-
-
-class RoutePusher(ABC):
-    @abstractmethod
-    def push(self, api_path: str, endpoint: str) -> None:
-        """Notify the gateway of a new (api_path, endpoint) route."""
-
-
-class HttpRoutePusher(RoutePusher):
-    """Pushes route updates to the gateway's `/__platform/register-route` endpoint."""
-
-    def __init__(self, gateway_http_url: str = "http://localhost:8080"):
-        self.gateway_http_url = gateway_http_url
-
-    def push(self, api_path: str, endpoint: str) -> None:
-        try:
-            httpx.post(
-                f"{self.gateway_http_url}/__platform/register-route",
-                json={"api_path": api_path, "endpoint": endpoint},
-                timeout=5.0,
-            )
-        except httpx.RequestError as e:
-            logger.warning(
-                "could not push route %s → %s to gateway %s: %s",
-                api_path,
-                endpoint,
-                self.gateway_http_url,
-                e,
-            )
-
-
-class FakeRoutePusher(RoutePusher):
-    def __init__(self):
-        self.pushed: list[tuple[str, str]] = []
-
-    def push(self, api_path: str, endpoint: str) -> None:
-        self.pushed.append((api_path, endpoint))

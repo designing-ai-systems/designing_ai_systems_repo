@@ -6,7 +6,7 @@
 -- in-memory `WorkflowRegistry` and `JobStore` are the production
 -- backends used by the book demo. A `PostgresJobStore` /
 -- `PostgresWorkflowRegistry` against this schema is the natural
--- follow-up — see `chapters/book_discrepancies_chapter8.md` discrepancy #2.
+-- follow-up — see `chapters/book_discrepancies_chapter8.md` discrepancy #1.
 
 CREATE TABLE IF NOT EXISTS workflows (
     workflow_id        VARCHAR PRIMARY KEY,

@@ -3,7 +3,7 @@ Workflow Service registry — stores `WorkflowSpec` records.
 
 Storage abstraction matches the sessions/data pattern (`SessionStorage` ABC +
 `InMemorySessionStorage` + `PostgresSessionStorage`). The Postgres backend
-is deferred — see `chapters/book_discrepancies_chapter8.md` discrepancy #2.
+is deferred — see `chapters/book_discrepancies_chapter8.md` discrepancy #1.
 
 Book: "Designing AI Systems" (https://www.manning.com/books/designing-ai-systems)
   - Listing 8.22: WorkflowSpec

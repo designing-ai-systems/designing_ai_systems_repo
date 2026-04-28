@@ -122,6 +122,14 @@ message WorkflowDeployment {
 message DeployWorkflowRequest {
     string workflow_id = 1;
     int32 version = 2;
+    // Local-Docker demo wiring: the CLI runs `docker run` itself and reports
+    // the resulting container back to the Workflow Service. The service
+    // verifies /health/ready, stores the deployment record, and pushes the
+    // route to the gateway. In production with Kubernetes, the Workflow
+    // Service generates these fields from its own K8s API calls (the CLI is
+    // not in the container-launching path).
+    string container_id = 3;
+    string endpoint = 4;
 }
 
 message DeployWorkflowResponse {

@@ -10,8 +10,10 @@ __pycache__/
 **/*.pyc
 **/*.pyo
 
-# Build outputs / generated artifacts
-build/
+# Generated artifacts (NOT build/ — the per-workflow Dockerfile generated
+# by `genai-platform deploy` lives at build/<name>/Dockerfile and COPYs
+# build/<name>/workflow.py during its build, so build/ has to remain
+# visible in the build context).
 *.egg-info
 .coverage
 htmlcov/

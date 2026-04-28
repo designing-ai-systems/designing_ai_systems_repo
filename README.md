@@ -503,6 +503,21 @@ Each source file maps to specific listings in [Designing AI Systems](https://www
 | `services/guardrails/service.py` | 6.19 (gRPC servicer), 6.20 (multi-point eval), 6.21 (input validation), 6.23 (output filtering) |
 | `genai_platform/clients/guardrails.py` | 6.19 (policy check), 6.20 (validate input), 6.23 (filter output) |
 | `examples/quickstart_tools.py` | 6.4, 6.7, 6.8, 6.12–6.14 (execute + seeded CredentialStore), 6.19, 6.20, 6.23 (end-to-end demo) |
+| **Workflow Service (Chapter 8)** | |
+| `genai_platform/workflow.py` | 8.2 (`@workflow` decorator) |
+| `examples/quickstart_workflow.py` | 8.1 (sync workflow example) |
+| `examples/quickstart_workflow_stream.py` | 8.5 (streaming workflow yielding tokens) |
+| `examples/quickstart_workflow_async.py` | 8.7 (async deep-research workflow), 8.11 (progress + checkpointing) |
+| `examples/quickstart_workflow_compose.py` | 8.15 (parent calling child), 8.16 (parallel calls) |
+| `genai_platform/runtime/server.py` | 8.3 (`find_workflow` + `build_app`), 8.4 (sync handler), 8.6 (SSE/stream handler), 8.8 (async handler), 8.12 (uvicorn entrypoint with workers) |
+| `genai_platform/clients/workflow.py` | 8.11 (job-progress + checkpoint helpers), 8.17 (`call_parallel` with ThreadPoolExecutor), 8.18 (`call()` response-mode routing), 8.19 (HTTP retry for workflow→workflow), 8.20 (`_poll_until_complete` + `_consume_stream`) |
+| `genai_platform/grpc_retry.py` | 8.13 (gRPC `RetryInterceptor`) |
+| `genai_platform/clients/base.py` | 8.14 (attaching retry interceptor to every SDK channel) |
+| `services/workflow/schema.sql` | 8.9 (jobs table) |
+| `services/gateway/http_handler.py` | 8.10 (`/jobs/{id}` polling endpoint, proxied to `WorkflowService.GetJobStatus`) |
+| `proto/workflow.proto` | 8.21 (WorkflowService gRPC contract), 8.22 (registry messages — WorkflowSpec, ScalingConfig, ResourceConfig), 8.23 (deployment messages — WorkflowDeployment, deploy/rollback requests) |
+| `genai_platform/cli/deploy.py` | 8.24 (generated Dockerfile in `generate_dockerfile`); also generates the K8s Deployment / HorizontalPodAutoscaler / Service manifests in `build/<workflow-name>/` |
+| `genai_platform/cli/docker_runner.py` | local-Docker demo runner used by `genai-platform deploy` (production replaces this with the Workflow Service's K8s API client) |
 
 ### Key Design Principles
 
