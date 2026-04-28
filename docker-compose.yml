@@ -71,6 +71,7 @@ services:
       DB_CONNECTION_STRING: postgresql://postgres@postgres/genai_platform
       # Embedding generation goes through the Model Service (chapter 5).
       GENAI_GATEWAY_URL: gateway:50051
+      GENAI_GATEWAY_INSECURE: "1"   # in-cluster gRPC is plaintext
     depends_on:
       postgres:
         condition: service_healthy
@@ -97,6 +98,7 @@ services:
       # a successful deploy. This service has no docker access; the CLI on
       # the host runs `docker run` and reports back via DeployWorkflow.
       GENAI_GATEWAY_HTTP_URL: http://gateway:8080
+      GENAI_GATEWAY_INSECURE: "1"   # in-cluster gRPC is plaintext
 
   gateway:
     build:

@@ -95,6 +95,9 @@ class TestComposeMode:
         assert result.endpoint == "genai-workflow-x:8000"
         env_args = [a for i, a in enumerate(run_cmd) if i > 0 and run_cmd[i - 1] == "-e"]
         assert "GENAI_GATEWAY_URL=gateway:50051" in env_args
+        # Compose-network gRPC is plaintext; container must opt out of TLS
+        # or the SDK inside it would default to a secure channel.
+        assert "GENAI_GATEWAY_INSECURE=1" in env_args
 
     def test_auto_detected_compose_network(self, monkeypatch):
         """No env var, but `docker network inspect genai-platform_default` says

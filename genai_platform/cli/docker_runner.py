@@ -132,7 +132,14 @@ class DockerDeployer(Deployer):
             f"GENAI_GATEWAY_URL={gateway_url}",
         ]
         if compose_network:
-            cmd += ["--network", compose_network]
+            cmd += [
+                "--network",
+                compose_network,
+                # In-cluster gRPC is plaintext; the SDK inside this container
+                # would otherwise default to TLS for any non-localhost URL.
+                "-e",
+                "GENAI_GATEWAY_INSECURE=1",
+            ]
             endpoint = f"{container_name}:{RUNTIME_CONTAINER_PORT}"
         else:
             host_port = _find_free_port()
