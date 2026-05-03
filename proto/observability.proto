@@ -1,0 +1,352 @@
+// Observability Service Protocol Buffer definitions.
+//
+// Book: "Designing AI Systems" (https://www.manning.com/books/designing-ai-systems)
+//   Listing 7.1: ObservabilityService gRPC contract
+//   Listing 7.2: Structured log event
+//   Listing 7.5: Span / Generation / Trace messages
+//   Listing 7.11: Score message and ScoreSource
+
+syntax = "proto3";
+
+package observability;
+
+import "google/protobuf/timestamp.proto";
+
+// Listing 7.1
+service ObservabilityService {
+    // Logs
+    rpc IngestLogs(IngestLogsRequest) returns (IngestLogsResponse);
+    rpc QueryLogs(QueryLogsRequest) returns (QueryLogsResponse);
+
+    // Metrics
+    rpc RecordMetrics(RecordMetricsRequest) returns (RecordMetricsResponse);
+    rpc QueryMetrics(QueryMetricsRequest) returns (QueryMetricsResponse);
+
+    // Tracing
+    rpc RecordSpan(RecordSpanRequest) returns (RecordSpanResponse);
+    rpc RecordGeneration(RecordGenerationRequest) returns (RecordGenerationResponse);
+    rpc GetTrace(GetTraceRequest) returns (Trace);
+    rpc QueryTraces(QueryTracesRequest) returns (QueryTracesResponse);
+
+    // Scores
+    rpc RecordScore(RecordScoreRequest) returns (RecordScoreResponse);
+    rpc QueryScores(QueryScoresRequest) returns (QueryScoresResponse);
+
+    // Cost & budgets
+    rpc GetCostReport(CostReportRequest) returns (CostReport);
+    rpc SetBudgetAlert(SetBudgetAlertRequest) returns (SetBudgetAlertResponse);
+    rpc GetBudgetStatus(GetBudgetStatusRequest) returns (BudgetStatus);
+
+    // Health
+    rpc GetServiceHealth(ServiceHealthRequest) returns (ServiceHealthResponse);
+}
+
+// ---------- Listing 7.2: structured log events ----------
+
+enum Severity {
+    SEVERITY_UNSPECIFIED = 0;
+    DEBUG = 1;
+    INFO = 2;
+    WARNING = 3;
+    ERROR = 4;
+    CRITICAL = 5;
+}
+
+message LogEvent {
+    string event_id = 1;
+    string trace_id = 2;
+    string span_id = 3;
+    google.protobuf.Timestamp timestamp = 4;
+    string service = 5;
+    Severity severity = 6;
+    string event_type = 7;
+    string message = 8;
+    map<string, string> attributes = 9;
+    map<string, double> numeric_attributes = 10;
+    string workflow_id = 11;
+    string user_id = 12;
+}
+
+message IngestLogsRequest {
+    repeated LogEvent events = 1;
+}
+
+message IngestLogsResponse {
+    int32 ingested = 1;
+}
+
+message QueryLogsRequest {
+    string trace_id = 1;
+    string span_id = 2;
+    string service = 3;
+    string event_type = 4;
+    Severity min_severity = 5;
+    map<string, string> attribute_filters = 6;
+    google.protobuf.Timestamp start_time = 7;
+    google.protobuf.Timestamp end_time = 8;
+    int32 limit = 9;
+    string cursor = 10;
+}
+
+message QueryLogsResponse {
+    repeated LogEvent events = 1;
+    string next_cursor = 2;
+    int32 total_matched = 3;
+}
+
+// ---------- Metrics ----------
+
+enum MetricType {
+    METRIC_TYPE_UNSPECIFIED = 0;
+    COUNTER = 1;
+    HISTOGRAM = 2;
+}
+
+message MetricRecord {
+    string name = 1;
+    MetricType type = 2;
+    double value = 3;
+    map<string, string> labels = 4;
+    google.protobuf.Timestamp timestamp = 5;
+}
+
+message RecordMetricsRequest {
+    repeated MetricRecord records = 1;
+}
+
+message RecordMetricsResponse {
+    int32 recorded = 1;
+}
+
+message QueryMetricsRequest {
+    string name = 1;
+    map<string, string> label_filters = 2;
+    google.protobuf.Timestamp start_time = 3;
+    google.protobuf.Timestamp end_time = 4;
+    string aggregation = 5;  // "sum", "count", "p50", "p95", "p99", "avg"
+}
+
+message QueryMetricsResponse {
+    string name = 1;
+    string aggregation = 2;
+    double value = 3;
+    int32 sample_count = 4;
+    map<string, double> percentiles = 5;
+}
+
+// ---------- Listing 7.5: spans, generations, traces ----------
+
+enum SpanStatus {
+    SPAN_STATUS_UNSPECIFIED = 0;
+    OK = 1;
+    SPAN_ERROR = 2;
+}
+
+message SpanEvent {
+    string name = 1;
+    google.protobuf.Timestamp timestamp = 2;
+    map<string, string> attributes = 3;
+}
+
+message Span {
+    string trace_id = 1;
+    string span_id = 2;
+    string parent_span_id = 3;
+    string service = 4;
+    string operation = 5;
+    google.protobuf.Timestamp start_time = 6;
+    google.protobuf.Timestamp end_time = 7;
+    SpanStatus status = 8;
+    string error_message = 9;
+    map<string, string> attributes = 10;
+    map<string, double> numeric_attributes = 11;
+    repeated SpanEvent events = 12;
+}
+
+message Generation {
+    Span span = 1;
+    string model = 2;
+    string provider = 3;
+    string requested_model = 4;
+    int32 prompt_tokens = 5;
+    int32 completion_tokens = 6;
+    double cost_usd = 7;
+    bool cache_hit = 8;
+    bool fallback_used = 9;
+    double time_to_first_token_ms = 10;
+}
+
+message Trace {
+    string trace_id = 1;
+    string session_id = 2;
+    repeated Span spans = 3;
+    repeated Generation generations = 4;
+    string input = 5;
+    string output = 6;
+    double total_duration_ms = 7;
+    double total_cost_usd = 8;
+    int32 total_tokens = 9;
+    repeated Score scores = 10;
+    repeated string tags = 11;
+    string workflow_id = 12;
+    string user_id = 13;
+}
+
+message RecordSpanRequest {
+    repeated Span spans = 1;
+}
+
+message RecordSpanResponse {
+    int32 recorded = 1;
+}
+
+message RecordGenerationRequest {
+    repeated Generation generations = 1;
+}
+
+message RecordGenerationResponse {
+    int32 recorded = 1;
+}
+
+message GetTraceRequest {
+    string trace_id = 1;
+}
+
+message QueryTracesRequest {
+    string workflow_id = 1;
+    string user_id = 2;
+    string session_id = 3;
+    repeated string tags = 4;
+    google.protobuf.Timestamp start_time = 5;
+    google.protobuf.Timestamp end_time = 6;
+    double min_duration_ms = 7;
+    double max_duration_ms = 8;
+    map<string, double> min_score = 9;
+    map<string, double> max_score = 10;
+    int32 limit = 11;
+}
+
+message QueryTracesResponse {
+    repeated Trace traces = 1;
+    int32 total_matched = 2;
+}
+
+// ---------- Listing 7.11: scores ----------
+
+enum ScoreSource {
+    SCORE_SOURCE_UNSPECIFIED = 0;
+    AUTOMATED = 1;
+    MODEL_JUDGE = 2;
+    HUMAN = 3;
+    USER_FEEDBACK = 4;
+}
+
+message Score {
+    string score_id = 1;
+    string trace_id = 2;
+    string span_id = 3;
+    string generation_id = 4;
+    string name = 5;
+    oneof value {
+        double numeric_value = 6;
+        string categorical_value = 7;
+        bool boolean_value = 8;
+    }
+    ScoreSource source = 9;
+    string comment = 10;
+    map<string, string> metadata = 11;
+    google.protobuf.Timestamp timestamp = 12;
+}
+
+message RecordScoreRequest {
+    Score score = 1;
+}
+
+message RecordScoreResponse {
+    string score_id = 1;
+}
+
+message QueryScoresRequest {
+    string trace_id = 1;
+    string name = 2;
+    ScoreSource source = 3;
+    google.protobuf.Timestamp start_time = 4;
+    google.protobuf.Timestamp end_time = 5;
+    int32 limit = 6;
+}
+
+message QueryScoresResponse {
+    repeated Score scores = 1;
+}
+
+// ---------- Cost & budgets ----------
+
+message CostBucket {
+    map<string, string> dimensions = 1;
+    double cost_usd = 2;
+    int32 prompt_tokens = 3;
+    int32 completion_tokens = 4;
+    int32 request_count = 5;
+}
+
+message CostReport {
+    google.protobuf.Timestamp start_time = 1;
+    google.protobuf.Timestamp end_time = 2;
+    repeated string group_by = 3;
+    repeated CostBucket buckets = 4;
+    double total_cost_usd = 5;
+}
+
+message CostReportRequest {
+    google.protobuf.Timestamp start_time = 1;
+    google.protobuf.Timestamp end_time = 2;
+    repeated string group_by = 3;
+    map<string, string> filters = 4;
+    string granularity = 5;  // "daily" | "weekly" | "monthly"
+}
+
+message BudgetAlert {
+    string name = 1;
+    string scope_type = 2;   // "team" | "workflow" | "application"
+    string scope_value = 3;
+    double limit_usd = 4;
+    string period = 5;        // "daily" | "weekly" | "monthly"
+    repeated double thresholds = 6;
+    repeated string notification_channels = 7;
+}
+
+message SetBudgetAlertRequest {
+    BudgetAlert alert = 1;
+}
+
+message SetBudgetAlertResponse {
+    string name = 1;
+}
+
+message GetBudgetStatusRequest {
+    string name = 1;
+}
+
+message BudgetStatus {
+    BudgetAlert alert = 1;
+    double current_spend_usd = 2;
+    double projected_spend_usd = 3;
+    double percent_used = 4;
+    repeated double thresholds_crossed = 5;
+}
+
+// ---------- Health ----------
+
+message ServiceHealthRequest {
+    string service = 1;
+    int32 lookback_seconds = 2;
+}
+
+message ServiceHealthResponse {
+    string service = 1;
+    string status = 2;       // "healthy" | "degraded" | "unknown"
+    google.protobuf.Timestamp last_span_at = 3;
+    int32 span_count = 4;
+    double error_rate = 5;
+    string detail = 6;
+}

@@ -11,8 +11,10 @@ import grpc
 
 from proto import (
     data_pb2_grpc,
+    experiments_pb2_grpc,
     guardrails_pb2_grpc,
     models_pb2_grpc,
+    observability_pb2_grpc,
     sessions_pb2_grpc,
     tools_pb2_grpc,
     workflow_pb2_grpc,
@@ -38,6 +40,10 @@ class GenericProxy:
             "tools": lambda channel: tools_pb2_grpc.ToolServiceStub(channel),
             "guardrails": lambda channel: guardrails_pb2_grpc.GuardrailsServiceStub(channel),
             "workflow": lambda channel: workflow_pb2_grpc.WorkflowServiceStub(channel),
+            "observability": lambda channel: observability_pb2_grpc.ObservabilityServiceStub(
+                channel
+            ),
+            "experiments": lambda channel: experiments_pb2_grpc.ExperimentationServiceStub(channel),
         }
 
     def _extract_target_service(self, context) -> Optional[str]:
@@ -200,5 +206,21 @@ class GuardrailsServiceProxy(GenericServiceProxy, guardrails_pb2_grpc.Guardrails
 
 class WorkflowServiceProxy(GenericServiceProxy, workflow_pb2_grpc.WorkflowServiceServicer):
     """Proxy handler for Workflow Service."""
+
+    pass
+
+
+class ObservabilityServiceProxy(
+    GenericServiceProxy, observability_pb2_grpc.ObservabilityServiceServicer
+):
+    """Proxy handler for Observability Service (Chapter 7)."""
+
+    pass
+
+
+class ExperimentsServiceProxy(
+    GenericServiceProxy, experiments_pb2_grpc.ExperimentationServiceServicer
+):
+    """Proxy handler for Experimentation Service (Chapter 7)."""
 
     pass

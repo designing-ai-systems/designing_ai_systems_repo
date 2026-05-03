@@ -8,9 +8,10 @@ import os
 from typing import Optional
 
 from .clients.data import DataClient
-from .clients.evaluation import EvaluationClient
+from .clients.experiments import ExperimentsClient
 from .clients.guardrails import GuardrailsClient
 from .clients.models import ModelClient
+from .clients.observability import ObservabilityClient
 from .clients.sessions import SessionClient
 from .clients.tools import ToolClient
 from .clients.workflow import WorkflowClient
@@ -50,7 +51,8 @@ class GenAIPlatform:
         self._data = None
         self._guardrails = None
         self._tools = None
-        self._evaluation = None
+        self._observability = None
+        self._experiments = None
         self._workflows = None
 
     @property
@@ -89,11 +91,18 @@ class GenAIPlatform:
         return self._tools
 
     @property
-    def evaluation(self) -> EvaluationClient:
-        """Access the Evaluation Service client."""
-        if self._evaluation is None:
-            self._evaluation = EvaluationClient(self)
-        return self._evaluation
+    def observability(self) -> ObservabilityClient:
+        """Access the Observability Service client (Chapter 7)."""
+        if self._observability is None:
+            self._observability = ObservabilityClient(self)
+        return self._observability
+
+    @property
+    def experiments(self) -> ExperimentsClient:
+        """Access the Experimentation Service client (Chapter 7)."""
+        if self._experiments is None:
+            self._experiments = ExperimentsClient(self)
+        return self._experiments
 
     @property
     def workflows(self) -> WorkflowClient:

@@ -8,8 +8,13 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Optional
 
+import grpc
+
+from proto import observability_pb2_grpc
 from services.models.service import ModelService
+from services.shared.observability_client import ObservabilityClient
 from services.shared.server import create_grpc_server, get_service_port, run_service
 
 
@@ -28,6 +33,16 @@ def load_env_file(env_path: Path) -> None:
             os.environ[key] = value
 
 
+def _build_observability_client() -> Optional[ObservabilityClient]:
+    """Wire an ObservabilityClient if OBSERVABILITY_SERVICE_ADDR is set."""
+    addr = os.getenv("OBSERVABILITY_SERVICE_ADDR")
+    if not addr:
+        return None
+    channel = grpc.insecure_channel(addr)
+    stub = observability_pb2_grpc.ObservabilityServiceStub(channel)
+    return ObservabilityClient(stub=stub, service_name="models")
+
+
 def main():
     """Run the Model Service server."""
     project_root = Path(__file__).resolve().parents[2]
@@ -36,7 +51,7 @@ def main():
     service_name = "models"
     port = get_service_port(service_name)
 
-    servicer = ModelService()
+    servicer = ModelService(observability=_build_observability_client())
     server = create_grpc_server(
         servicer=servicer,
         port=port,

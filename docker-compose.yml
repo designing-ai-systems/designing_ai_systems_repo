@@ -59,6 +59,11 @@ services:
     env_file:
       - path: ./.env
         required: false
+    environment:
+      # Wires TracedService → Observability Service (Listing 7.7). Every
+      # Chat call emits a Generation that the Observability Service
+      # ingests; remove this var to disable telemetry without code edits.
+      OBSERVABILITY_SERVICE_ADDR: observability:50059
     # OPENAI_API_KEY / ANTHROPIC_API_KEY come from .env when present.
 
   data:
@@ -100,6 +105,28 @@ services:
       GENAI_GATEWAY_HTTP_URL: http://gateway:8080
       GENAI_GATEWAY_INSECURE: "1"   # in-cluster gRPC is plaintext
 
+  observability:
+    build:
+      context: .
+      dockerfile: docker/observability.Dockerfile
+    image: genai-platform/observability:dev
+    # The Observability Service has no upstream dependencies; it is the
+    # bottom of the platform telemetry stack. Spans, generations, logs,
+    # metrics, and scores are buffered + flushed by the calling
+    # services through the in-process ObservabilityClient.
+
+  experiments:
+    build:
+      context: .
+      dockerfile: docker/experiments.Dockerfile
+    image: genai-platform/experiments:dev
+    environment:
+      # Reach the Observability Service for trace/score lookups
+      # (AddFromProduction, RunScoringRule, SubmitAnnotation).
+      OBSERVABILITY_SERVICE_ADDR: observability:50059
+    depends_on:
+      - observability
+
   gateway:
     build:
       context: .
@@ -115,6 +142,8 @@ services:
       GUARDRAILS_SERVICE_ADDR: guardrails:50055
       TOOLS_SERVICE_ADDR: tools:50056
       WORKFLOW_SERVICE_ADDR: workflow:50058
+      OBSERVABILITY_SERVICE_ADDR: observability:50059
+      EXPERIMENTS_SERVICE_ADDR: experiments:50060
     depends_on:
       - sessions
       - models
@@ -122,6 +151,8 @@ services:
       - tools
       - guardrails
       - workflow
+      - observability
+      - experiments
 
 volumes:
   postgres_data:

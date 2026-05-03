@@ -12,6 +12,9 @@ Book: "Designing AI Systems" (https://www.manning.com/books/designing-ai-systems
   - Listing 3.6: ChatRequest Protocol Buffer definition (proto side)
   - Listing 3.7: ChatResponse Protocol Buffer definition (proto side)
   - Listing 3.8: Provider adapter interface (used by this servicer)
+  - Listing 7.3: log_fallback_triggered helper (provider fallback log)
+  - Listing 7.7: Chat method with automatic generation tracking
+  - Listing 7.8: Metrics publisher integration
 """
 
 from __future__ import annotations
@@ -25,6 +28,10 @@ import grpc
 from proto import models_pb2, models_pb2_grpc
 from services.models.embedding_providers.base import EmbeddingProvider
 from services.models.embedding_providers.openai_provider import OpenAIEmbeddingProvider
+from services.models.metrics_publisher import (
+    ModelRequestMetrics,
+    ModelServiceMetricsPublisher,
+)
 from services.models.models import (
     ChatChunk,
     ChatConfig,
@@ -36,17 +43,31 @@ from services.models.models import (
 )
 from services.models.providers import AnthropicProvider, ModelProvider, OpenAIProvider
 from services.models.store import ModelRegistry, PromptRegistry
+from services.shared.observability_client import ObservabilityClient
 from services.shared.servicer_base import BaseServicer
+from services.shared.traced_service import TraceContext, TracedService
 
 
-class ModelService(models_pb2_grpc.ModelServiceServicer, BaseServicer):
-    def __init__(self):
+class ModelService(models_pb2_grpc.ModelServiceServicer, BaseServicer, TracedService):
+    """The Model Service.
+
+    Inherits from :class:`TracedService` so every Chat call produces a
+    Generation in the observability backend (Listing 7.7). Pass an
+    :class:`ObservabilityClient` to wire telemetry; the default
+    :py:meth:`ObservabilityClient.null` keeps the service usable in
+    tests and in deployments where observability is disabled.
+    """
+
+    def __init__(self, observability: Optional[ObservabilityClient] = None):
+        observability = observability or ObservabilityClient.null()
+        TracedService.__init__(self, "models", observability)
         self._providers: Dict[str, ModelProvider] = {}
         self._embedding_providers: Dict[str, EmbeddingProvider] = {}
         self._initialize_providers()
         self._initialize_embedding_providers()
         self._model_registry = ModelRegistry()
         self._prompts = PromptRegistry()
+        self._metrics_publisher = ModelServiceMetricsPublisher(observability)
 
     def add_to_server(self, server: grpc.Server):
         models_pb2_grpc.add_ModelServiceServicer_to_server(self, server)
@@ -185,14 +206,47 @@ class ModelService(models_pb2_grpc.ModelServiceServicer, BaseServicer):
         if request.HasField("response_format"):
             response_format = ResponseFormat(type=request.response_format.type)
 
-        domain_resp = provider.chat(
+        # Listing 7.7: wrap the provider call in trace_generation so every
+        # workflow that calls platform.models.chat(...) gets a generation
+        # automatically, with token counts, cost, and timing, without the
+        # workflow developer writing a single line of tracing code.
+        trace_context = self._extract_trace_context(context)
+        with self.trace_generation(
+            trace_context,
             model=model_name,
-            messages=domain_msgs,
-            config=config,
-            tools=tools,
-            response_format=response_format,
-            system_prompt=system_prompt,
+            requested_model=request.model,
+        ) as gen_ctx:
+            domain_resp = provider.chat(
+                model=model_name,
+                messages=domain_msgs,
+                config=config,
+                tools=tools,
+                response_format=response_format,
+                system_prompt=system_prompt,
+            )
+            cost_usd = self._estimate_cost(model_name, domain_resp)
+            gen_ctx.update(
+                provider=getattr(provider, "name", domain_resp.provider or ""),
+                prompt_tokens=domain_resp.usage.prompt_tokens if domain_resp.usage else 0,
+                completion_tokens=(domain_resp.usage.completion_tokens if domain_resp.usage else 0),
+                cost_usd=cost_usd,
+            )
+
+        # Listing 7.8: emit aggregate metrics so dashboards stay current.
+        self._metrics_publisher.publish(
+            ModelRequestMetrics(
+                provider=getattr(provider, "name", domain_resp.provider or "unknown"),
+                model=model_name,
+                workflow_id=trace_context.workflow_id or "",
+                cache_hit=False,
+                fallback_used=False,
+                prompt_tokens=domain_resp.usage.prompt_tokens if domain_resp.usage else 0,
+                completion_tokens=(domain_resp.usage.completion_tokens if domain_resp.usage else 0),
+                cost_usd=cost_usd,
+                duration_ms=0.0,
+            )
         )
+
         return self._domain_response_to_proto(domain_resp)
 
     def ChatStream(
@@ -441,3 +495,79 @@ class ModelService(models_pb2_grpc.ModelServiceServicer, BaseServicer):
         if "anthropic" in self._providers:
             return "claude-sonnet-4-5"
         return None
+
+    def _extract_trace_context(self, context) -> TraceContext:
+        """Read trace context from incoming gRPC metadata (if any).
+
+        The Gateway seeds ``x-trace-id`` for every request; downstream
+        services pass ``x-parent-span-id`` so child spans nest correctly.
+        Missing values fall back to fresh defaults so the call still
+        produces a self-contained trace.
+        """
+        import uuid
+
+        metadata: Dict[str, str] = {}
+        invocation = getattr(context, "invocation_metadata", None)
+        if callable(invocation):
+            try:
+                metadata = {k: v for k, v in invocation()}
+            except Exception:
+                metadata = {}
+        return TraceContext(
+            trace_id=metadata.get("x-trace-id") or uuid.uuid4().hex,
+            span_id=metadata.get("x-parent-span-id") or None,
+            parent_span_id=metadata.get("x-parent-span-id") or None,
+            workflow_id=metadata.get("x-workflow-id", ""),
+            user_id=metadata.get("x-user-id", ""),
+            session_id=metadata.get("x-session-id", ""),
+        )
+
+    def _estimate_cost(self, model_name: str, response: ChatResponse) -> float:
+        """Best-effort cost estimate from token counts.
+
+        Uses a small built-in price table for the supported commercial
+        models; unknown models return 0.0 so the metric is still emitted
+        but doesn't pretend to know the price.
+        """
+        if response.usage is None:
+            return 0.0
+        # Prices are USD per 1M tokens (input, output).
+        prices = {
+            "gpt-4o": (2.5, 10.0),
+            "gpt-4o-mini": (0.15, 0.6),
+            "claude-sonnet-4-5": (3.0, 15.0),
+            "claude-opus-4-5": (15.0, 75.0),
+            "claude-haiku-4-5": (0.8, 4.0),
+        }
+        price = prices.get(model_name)
+        if price is None:
+            return 0.0
+        input_per_token = price[0] / 1_000_000
+        output_per_token = price[1] / 1_000_000
+        return (
+            response.usage.prompt_tokens * input_per_token
+            + response.usage.completion_tokens * output_per_token
+        )
+
+    def _log_fallback_triggered(
+        self,
+        original: str,
+        fallback: str,
+        error: Exception,
+        trace_context: TraceContext,
+    ) -> None:
+        """Listing 7.3: emit a structured WARNING when a provider fallback fires."""
+        self.observability.log(
+            event_type="model_fallback",
+            severity="WARNING",
+            message=f"Fallback: {original} -> {fallback}",
+            trace_id=trace_context.trace_id,
+            span_id=trace_context.span_id or "",
+            workflow_id=trace_context.workflow_id or "",
+            user_id=trace_context.user_id or "",
+            attributes={
+                "original_provider": original,
+                "fallback_provider": fallback,
+                "error_type": type(error).__name__,
+            },
+        )

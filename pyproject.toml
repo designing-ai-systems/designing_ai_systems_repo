@@ -32,10 +32,15 @@ dependencies = [
 [project.scripts]
 genai-platform = "genai_platform.cli.deploy:main"
 
+# Runtime extras — opt-in via `uv sync --extra postgres`.
 [project.optional-dependencies]
 postgres = [
     "psycopg2-binary>=2.9.0",
 ]
+
+# PEP 735 dev dependency group — `uv sync` installs this by default
+# (skip with `uv sync --no-dev`).
+[dependency-groups]
 dev = [
     "pytest>=7.4.0",
     "pytest-asyncio>=0.21.0",

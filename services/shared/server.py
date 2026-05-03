@@ -22,8 +22,9 @@ SERVICE_PORTS = {
     "data": 50054,
     "guardrails": 50055,
     "tools": 50056,
-    "evaluation": 50057,
     "workflow": 50058,
+    "observability": 50059,
+    "experiments": 50060,
 }
 
 

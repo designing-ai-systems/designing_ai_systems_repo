@@ -9,17 +9,21 @@ import grpc
 
 from proto import (
     data_pb2_grpc,
+    experiments_pb2_grpc,
     guardrails_pb2_grpc,
     models_pb2_grpc,
+    observability_pb2_grpc,
     sessions_pb2_grpc,
     tools_pb2_grpc,
     workflow_pb2_grpc,
 )
 from services.gateway.grpc_proxy import (
     DataServiceProxy,
+    ExperimentsServiceProxy,
     GenericProxy,
     GuardrailsServiceProxy,
     ModelServiceProxy,
+    ObservabilityServiceProxy,
     SessionServiceProxy,
     ToolServiceProxy,
     WorkflowServiceProxy,
@@ -55,6 +59,12 @@ def create_grpc_server(registry: ServiceRegistry, port: int = 50051):
         GuardrailsServiceProxy(proxy), server
     )
     workflow_pb2_grpc.add_WorkflowServiceServicer_to_server(WorkflowServiceProxy(proxy), server)
+    observability_pb2_grpc.add_ObservabilityServiceServicer_to_server(
+        ObservabilityServiceProxy(proxy), server
+    )
+    experiments_pb2_grpc.add_ExperimentationServiceServicer_to_server(
+        ExperimentsServiceProxy(proxy), server
+    )
 
     listen_addr = f"[::]:{port}"
     server.add_insecure_port(listen_addr)

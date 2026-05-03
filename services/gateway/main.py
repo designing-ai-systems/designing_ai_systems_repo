@@ -72,6 +72,10 @@ def main():
     registry.register_platform_service("tools", tools_addr)
     workflow_addr = os.getenv("WORKFLOW_SERVICE_ADDR", "localhost:50058")
     registry.register_platform_service("workflow", workflow_addr)
+    observability_addr = os.getenv("OBSERVABILITY_SERVICE_ADDR", "localhost:50059")
+    registry.register_platform_service("observability", observability_addr)
+    experiments_addr = os.getenv("EXPERIMENTS_SERVICE_ADDR", "localhost:50060")
+    registry.register_platform_service("experiments", experiments_addr)
 
     # Workflow routes are pushed to the gateway by the Workflow Service via
     # `RegisterRoute` after a successful deploy. Restarting the gateway
