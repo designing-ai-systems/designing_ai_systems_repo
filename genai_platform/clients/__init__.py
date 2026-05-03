@@ -6,6 +6,7 @@ from .guardrails import GuardrailsClient
 from .models import ModelClient
 from .sessions import SessionClient
 from .tools import ToolClient
+from .workflow import WorkflowClient
 
 __all__ = [
     "SessionClient",
@@ -14,4 +15,5 @@ __all__ = [
     "GuardrailsClient",
     "ToolClient",
     "EvaluationClient",
+    "WorkflowClient",
 ]

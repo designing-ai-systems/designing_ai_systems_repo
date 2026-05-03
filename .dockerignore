@@ -1,0 +1,35 @@
+# Keep the docker-compose / per-service build contexts small.
+
+.git
+.github
+.venv
+.pytest_cache
+.ruff_cache
+__pycache__/
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+
+# Generated artifacts (NOT build/ — the per-workflow Dockerfile generated
+# by `genai-platform deploy` lives at build/<name>/Dockerfile and COPYs
+# build/<name>/workflow.py during its build, so build/ has to remain
+# visible in the build context).
+*.egg-info
+.coverage
+htmlcov/
+
+# IDE / editor
+.idea
+.vscode
+.DS_Store
+
+# Local env / secrets — image inherits via env_file in compose
+.env
+
+# Tests are not needed at runtime; the platform runs on the production
+# code path. Comment out if you want tests inside the image (e.g. for
+# CI-in-Docker).
+tests/
+
+# Manuscript lives outside the runnable code; never goes into images.
+chapters/

@@ -1,0 +1,255 @@
+// Workflow Service Protocol Buffer definitions.
+//
+// Book: "Designing AI Systems" (https://www.manning.com/books/designing-ai-systems)
+//   Listing 8.21: WorkflowService gRPC contract
+//   Listing 8.22: Registry message types (WorkflowSpec, ScalingConfig, ResourceConfig)
+//   Listing 8.23: Deployment message types (WorkflowDeployment) + job message types
+
+syntax = "proto3";
+
+package workflow;
+
+// Listing 8.21
+service WorkflowService {
+    // Registry
+    rpc RegisterWorkflow(RegisterWorkflowRequest) returns (RegisterWorkflowResponse);
+    rpc GetWorkflow(GetWorkflowRequest) returns (GetWorkflowResponse);
+    rpc ListWorkflows(ListWorkflowsRequest) returns (ListWorkflowsResponse);
+    rpc UpdateWorkflow(UpdateWorkflowRequest) returns (UpdateWorkflowResponse);
+    rpc DeleteWorkflow(DeleteWorkflowRequest) returns (DeleteWorkflowResponse);
+
+    // Deployment
+    rpc DeployWorkflow(DeployWorkflowRequest) returns (DeployWorkflowResponse);
+    rpc GetDeploymentStatus(GetDeploymentStatusRequest) returns (GetDeploymentStatusResponse);
+    rpc RollbackWorkflow(RollbackWorkflowRequest) returns (RollbackWorkflowResponse);
+
+    // Routing — Workflow Service pushes routes; gateway re-hydrates on startup.
+    rpc RegisterRoute(RegisterRouteRequest) returns (RegisterRouteResponse);
+    rpc ListRoutes(ListRoutesRequest) returns (ListRoutesResponse);
+
+    // Async jobs (Listing 8.10–8.11)
+    rpc CreateJob(CreateJobRequest) returns (CreateJobResponse);
+    rpc GetJobStatus(GetJobStatusRequest) returns (GetJobStatusResponse);
+    rpc UpdateJobProgress(UpdateJobProgressRequest) returns (UpdateJobProgressResponse);
+    rpc SaveJobCheckpoint(SaveJobCheckpointRequest) returns (SaveJobCheckpointResponse);
+    rpc CompleteJob(CompleteJobRequest) returns (CompleteJobResponse);
+    rpc FailJob(FailJobRequest) returns (FailJobResponse);
+    rpc CancelJob(CancelJobRequest) returns (CancelJobResponse);
+}
+
+// Listing 8.22
+
+message ScalingConfig {
+    int32 min_replicas = 1;
+    int32 max_replicas = 2;
+    int32 target_cpu_percent = 3;
+}
+
+message ResourceConfig {
+    string cpu = 1;          // e.g., "500m"
+    string memory = 2;       // e.g., "512Mi"
+    string gpu_type = 3;     // optional, e.g., "nvidia-t4"
+    int32 num_gpus = 4;
+}
+
+message ReliabilityConfig {
+    int32 timeout_seconds = 1;
+    int32 max_retries = 2;
+}
+
+message WorkflowSpec {
+    string name = 1;
+    string api_path = 2;
+    string container_image = 3;
+    string response_mode = 4;          // "sync" | "stream" | "async"
+    ScalingConfig scaling = 5;
+    ResourceConfig resources = 6;
+    ReliabilityConfig reliability = 7;
+    int32 version = 8;
+}
+
+message RegisterWorkflowRequest {
+    WorkflowSpec spec = 1;
+}
+
+message RegisterWorkflowResponse {
+    string workflow_id = 1;
+    int32 version = 2;
+}
+
+message GetWorkflowRequest {
+    string name = 1;
+}
+
+message GetWorkflowResponse {
+    WorkflowSpec spec = 1;
+}
+
+message ListWorkflowsRequest {}
+
+message ListWorkflowsResponse {
+    repeated WorkflowSpec specs = 1;
+}
+
+message UpdateWorkflowRequest {
+    WorkflowSpec spec = 1;
+}
+
+message UpdateWorkflowResponse {
+    int32 version = 1;
+}
+
+message DeleteWorkflowRequest {
+    string name = 1;
+}
+
+message DeleteWorkflowResponse {
+    bool success = 1;
+}
+
+// Listing 8.23
+
+message WorkflowDeployment {
+    string workflow_id = 1;
+    string deployment_id = 2;
+    int32 version = 3;
+    string status = 4;                 // "deploying" | "healthy" | "failed"
+    int32 current_replicas = 5;
+    int32 desired_replicas = 6;
+    repeated string healthy_endpoints = 7;
+}
+
+message DeployWorkflowRequest {
+    string workflow_id = 1;
+    int32 version = 2;
+    // Local-Docker demo wiring: the CLI runs `docker run` itself and reports
+    // the resulting container back to the Workflow Service. The service
+    // verifies /health/ready, stores the deployment record, and pushes the
+    // route to the gateway. In production with Kubernetes, the Workflow
+    // Service generates these fields from its own K8s API calls (the CLI is
+    // not in the container-launching path).
+    string container_id = 3;
+    string endpoint = 4;
+}
+
+message DeployWorkflowResponse {
+    WorkflowDeployment deployment = 1;
+}
+
+message GetDeploymentStatusRequest {
+    string workflow_id = 1;
+}
+
+message GetDeploymentStatusResponse {
+    WorkflowDeployment deployment = 1;
+}
+
+message RollbackWorkflowRequest {
+    string workflow_id = 1;
+    int32 target_version = 2;
+}
+
+message RollbackWorkflowResponse {
+    WorkflowDeployment deployment = 1;
+}
+
+// Routing (push from Workflow Service to Gateway).
+
+message RegisterRouteRequest {
+    string api_path = 1;
+    string endpoint = 2;
+}
+
+message RegisterRouteResponse {
+    bool success = 1;
+}
+
+message Route {
+    string api_path = 1;
+    string endpoint = 2;
+}
+
+message ListRoutesRequest {}
+
+message ListRoutesResponse {
+    repeated Route routes = 1;
+}
+
+// Async jobs (Listing 8.10–8.11). State machine matches Listing 6.16 / ToolTask:
+//   "pending" → "running" → "succeeded" | "failed" | "cancelled" | "timed_out"
+
+message WorkflowJob {
+    string job_id = 1;
+    string workflow_id = 2;
+    string status = 3;
+    string progress_message = 4;
+    string input_json = 5;
+    string result_json = 6;
+    string error = 7;
+    string checkpoint_json = 8;
+    string assigned_endpoint = 9;
+    int64 created_at = 10;             // unix millis
+    int64 updated_at = 11;
+}
+
+message CreateJobRequest {
+    string workflow_id = 1;
+    string input_json = 2;
+    string assigned_endpoint = 3;
+}
+
+message CreateJobResponse {
+    string job_id = 1;
+}
+
+message GetJobStatusRequest {
+    string job_id = 1;
+}
+
+message GetJobStatusResponse {
+    WorkflowJob job = 1;
+}
+
+message UpdateJobProgressRequest {
+    string job_id = 1;
+    string progress_message = 2;
+}
+
+message UpdateJobProgressResponse {
+    bool success = 1;
+}
+
+message SaveJobCheckpointRequest {
+    string job_id = 1;
+    string checkpoint_json = 2;
+}
+
+message SaveJobCheckpointResponse {
+    bool success = 1;
+}
+
+message CompleteJobRequest {
+    string job_id = 1;
+    string result_json = 2;
+}
+
+message CompleteJobResponse {
+    bool success = 1;
+}
+
+message FailJobRequest {
+    string job_id = 1;
+    string error = 2;
+}
+
+message FailJobResponse {
+    bool success = 1;
+}
+
+message CancelJobRequest {
+    string job_id = 1;
+}
+
+message CancelJobResponse {
+    bool success = 1;
+}

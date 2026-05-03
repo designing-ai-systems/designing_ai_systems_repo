@@ -7,13 +7,45 @@ The gateway serves two purposes (as described in Chapter 2):
 
 This is a single gateway component that handles both types of traffic.
 Internally, it runs two servers (HTTP and gRPC) but presents a unified gateway interface.
+
+On startup the gateway also re-hydrates its workflow routing table from
+``WorkflowService.ListRoutes``, so that a gateway restart by itself is
+non-disruptive (Routing model section of the chapter-8 plan).
 """
 
+import logging
 import os
 import threading
 
+import grpc
+
+from proto import workflow_pb2, workflow_pb2_grpc
 from services.gateway.registry import ServiceRegistry
 from services.gateway.servers import create_grpc_server, create_http_server
+
+logger = logging.getLogger(__name__)
+
+
+def _rehydrate_routes(registry: ServiceRegistry, workflow_addr: str) -> None:
+    """Pull current routes from the Workflow Service into the gateway's local cache.
+
+    Runs once at startup. If the Workflow Service is not reachable yet
+    (cold-start ordering), this is a soft failure — workflows will register
+    their routes via the push path (`POST /__platform/register-route`) as
+    they are deployed.
+    """
+    try:
+        channel = grpc.insecure_channel(workflow_addr)
+        stub = workflow_pb2_grpc.WorkflowServiceStub(channel)
+        resp = stub.ListRoutes(workflow_pb2.ListRoutesRequest(), timeout=2.0)
+        for route in resp.routes:
+            registry.register_workflow(route.api_path, route.endpoint)
+        if resp.routes:
+            print(f"Re-hydrated {len(resp.routes)} workflow route(s) from {workflow_addr}")
+    except grpc.RpcError as e:
+        logger.warning(
+            "could not re-hydrate routes from Workflow Service at %s: %s", workflow_addr, e
+        )
 
 
 def main():
@@ -38,10 +70,14 @@ def main():
     registry.register_platform_service("guardrails", guardrails_addr)
     tools_addr = os.getenv("TOOLS_SERVICE_ADDR", "localhost:50056")
     registry.register_platform_service("tools", tools_addr)
+    workflow_addr = os.getenv("WORKFLOW_SERVICE_ADDR", "localhost:50058")
+    registry.register_platform_service("workflow", workflow_addr)
 
-    # Register workflows (in production, this would come from Workflow Service)
-    # For now, we can register manually for testing
-    # registry.register_workflow("/patient-assistant", "localhost:8000")
+    # Workflow routes are pushed to the gateway by the Workflow Service via
+    # `RegisterRoute` after a successful deploy. Restarting the gateway
+    # re-hydrates the routing table from `WorkflowService.ListRoutes` below
+    # so that gateway restarts are non-disruptive.
+    _rehydrate_routes(registry, workflow_addr)
 
     # Ports
     http_port = int(os.getenv("GATEWAY_HTTP_PORT", "8080"))

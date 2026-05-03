@@ -36,5 +36,5 @@ class EvaluationClient(BaseClient):
         Returns:
             Comparison results with performance metrics
         """
-        # TODO: Implement in Chapter 8
+        # TODO: Implement in Chapter 7 (Observability + Experimentation).
         return {"results": "[Evaluation Service not yet implemented]"}
