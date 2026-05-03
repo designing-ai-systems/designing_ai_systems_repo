@@ -9,6 +9,8 @@ Production-ready platform for building GenAI applications with multi-provider su
 - **Data & RAG pipeline**: Document ingestion, chunking, embedding, vector search, hybrid search
 - **Tool management**: Registration, discovery, versioning, sandboxed execution
 - **Guardrails**: Input validation, output filtering, policy enforcement
+- **Observability**: Distributed traces, generations, structured logs, metrics, scores, cost & budget tracking
+- **Experimentation**: Versioned prompt/model/config targets, offline evaluation, online scoring rules, A/B tests, annotation queues
 - **Domain dataclasses**: Clean Python API -- never exposes Protocol Buffers
 - **Model discovery**: Query capabilities, register custom models
 - **Prompt registry**: Centralized system prompt management
@@ -17,32 +19,45 @@ Production-ready platform for building GenAI applications with multi-provider su
 
 ## Requirements
 
-- **Python 3.12+** (macOS: `brew install python@3.12`)
+- **[`uv`](https://docs.astral.sh/uv/)** — the only prerequisite. It manages the Python interpreter, the virtual environment, and all dependencies. Install with:
+  - macOS: `brew install uv`
+  - Linux / macOS: `curl -LsSf https://astral.sh/uv/install.sh | sh`
+  - Windows: `powershell -c "irm https://astral.sh/uv/install.ps1 | iex"`
 
 ## Setup
 
 ```bash
-# 1. Create virtual environment (Python 3.12+)
-python3 -m venv .venv
-source .venv/bin/activate
+# 1. Install dependencies (uv fetches Python 3.12, creates .venv, syncs from uv.lock)
+uv sync
 
-# 2. Install
-pip install -e ".[dev]"
+# 2. Configure API keys
+cat > .env <<'EOF'
+OPENAI_API_KEY=your-key
+ANTHROPIC_API_KEY=your-key
+EOF
 
-# 3. Configure API keys (create .env file)
-echo "OPENAI_API_KEY=your-key" > .env
-echo "ANTHROPIC_API_KEY=your-key" >> .env
+# 3. Generate Protocol Buffer code (only needed after editing .proto files)
+uv run python -m proto.generate
 
-# 4. Generate Protocol Buffer code (only needed after changing .proto files)
-python -m proto.generate
+# 4. Run tests
+uv run pytest tests/ -v
 
-# 5. Run tests
-pytest tests/ -v
-
-# 6. Lint (runs in CI on every PR)
-ruff check .
-ruff format --check .
+# 5. Lint (runs in CI on every PR)
+uv run ruff check .
+uv run ruff format --check .
 ```
+
+That's it. `uv run <cmd>` executes inside the project's virtual environment without needing to activate it. If you prefer activating:
+
+```bash
+source .venv/bin/activate          # macOS / Linux
+# .venv\Scripts\activate           # Windows PowerShell
+```
+
+> **Prompt tip:** if your shell prompt shows double parentheses like
+> `((.venv) )` after activating, add `export VIRTUAL_ENV_DISABLE_PROMPT=1`
+> to your shell rc file (`~/.zshrc` / `~/.bashrc`). Works around a known
+> bug in some Python `venv` activate templates.
 
 ### Optional: PostgreSQL storage
 
@@ -74,7 +89,7 @@ psql genai_platform < services/data/schema.sql
 #### Install the Python driver and configure
 
 ```bash
-pip install -e ".[postgres]"
+uv sync --extra postgres
 
 # Set env vars before starting the services:
 export SESSION_STORAGE=postgres
@@ -91,26 +106,34 @@ against your local server).
 
 **Model Service (Chapter 3):**
 ```bash
-python examples/quickstart_models.py
+uv run python examples/quickstart_models.py
 ```
 
 **Session + Model Integration (Chapters 3-4):**
 ```bash
-python examples/quickstart_conversation.py
+uv run python examples/quickstart_conversation.py
 ```
 
 **Tools & Guardrails (Chapter 6):**
 ```bash
-python examples/quickstart_tools.py               # full platform end-to-end (+ model loop if OPENAI_API_KEY set)
-python examples/test_tool_service.py              # tool service: register / discover / HTTP exec + credential injection / async / circuit breaker
-python examples/test_tool_service.py --mcp        # same, plus a live MCP call to https://mcp.deepwiki.com/mcp
-python examples/test_guardrails_service.py        # guardrails: input validation, output filtering, policy check, violation reporting
-python examples/quickstart_mcp.py                 # platform registers DeepWiki (public MCP server) and runs real MCP calls
+uv run python examples/quickstart_tools.py            # full platform end-to-end (+ model loop if OPENAI_API_KEY set)
+uv run python examples/test_tool_service.py           # tool service: register / discover / HTTP exec + credential injection / async / circuit breaker
+uv run python examples/test_tool_service.py --mcp     # same, plus a live MCP call to https://mcp.deepwiki.com/mcp
+uv run python examples/test_guardrails_service.py     # guardrails: input validation, output filtering, policy check, violation reporting
+uv run python examples/quickstart_mcp.py              # platform registers DeepWiki (public MCP server) and runs real MCP calls
+```
+
+**Observability & Experimentation (Chapter 7):**
+```bash
+uv run python examples/quickstart_observability.py    # custom trace_operation + cost drill-down (Listings 7.10, 7.13)
+uv run python examples/test_observability_service.py  # spans/generations, scores, logs, metrics, percentiles, budgets, health
+uv run python examples/quickstart_experiments.py      # register a target, run offline eval, A/B test on production traffic
+uv run python examples/test_experiments_service.py    # full improvement loop: targets, datasets, scoring rules, experiments, annotation
 ```
 
 ### Local development with Docker (recommended)
 
-`docker compose up` brings up the seven platform services + a
+`docker compose up` brings up the nine platform services + a
 pgvector-enabled Postgres on a shared network, in one command:
 
 ```bash
@@ -142,13 +165,15 @@ If you can't (or don't want to) use Docker, run each platform service
 in its own terminal:
 
 ```bash
-python -m services.sessions.main    # Terminal 1
-python -m services.models.main      # Terminal 2
-python -m services.data.main        # Terminal 3
-python -m services.tools.main       # Terminal 4
-python -m services.guardrails.main  # Terminal 5
-python -m services.workflow.main    # Terminal 6
-python -m services.gateway.main     # Terminal 7
+uv run python -m services.sessions.main       # Terminal 1
+uv run python -m services.models.main         # Terminal 2
+uv run python -m services.data.main           # Terminal 3
+uv run python -m services.tools.main          # Terminal 4
+uv run python -m services.guardrails.main     # Terminal 5
+uv run python -m services.workflow.main       # Terminal 6
+uv run python -m services.observability.main  # Terminal 7
+uv run python -m services.experiments.main    # Terminal 8 (set OBSERVABILITY_SERVICE_ADDR=localhost:50059)
+uv run python -m services.gateway.main        # Terminal 9
 ```
 
 In this mode, `genai-platform deploy` falls back to host-port mode: each
@@ -300,6 +325,162 @@ result = platform.guardrails.check_policy(
 print(result.allowed)
 ```
 
+### Observability Service (Chapter 7)
+
+```python
+from datetime import datetime, timedelta, timezone
+
+from genai_platform import GenAIPlatform
+
+platform = GenAIPlatform()
+
+# Custom span around an operation that wraps platform calls (Listing 7.10).
+# Child platform calls inherit the trace by reusing `ctx`.
+with platform.observability.trace_operation(
+    "rerank_pipeline",
+    workflow_id="patient-intake",
+    user_id="user-123",
+) as ctx:
+    # ... your custom work here ...
+    pass
+
+# Read a full trace back as a domain dataclass (Listing 7.5).
+# The SDK flushes the in-process buffer before reading.
+trace = platform.observability.get_trace(ctx.trace_id)
+for span in trace.spans:
+    print(f"  {span.service}.{span.operation} [{span.status}] {span.duration_ms:.1f}ms")
+for gen in trace.generations:
+    print(
+        f"  {gen.model}  in={gen.prompt_tokens} "
+        f"out={gen.completion_tokens} ${gen.cost_usd:.4f}"
+    )
+
+# Score a generation after the fact -- automated scorer, LLM-as-judge, or human (Listing 7.11)
+platform.observability.record_score(
+    trace_id=ctx.trace_id,
+    name="helpfulness",
+    value=0.85,
+    source="MODEL_JUDGE",
+    generation_id=trace.generations[0].span.span_id if trace.generations else "",
+)
+
+# Cost drill-down by team -> by model (Listing 7.13)
+now = datetime.now(timezone.utc)
+report = platform.observability.get_cost_report(
+    start_time=now - timedelta(days=30),
+    end_time=now,
+    group_by=["team"],
+)
+print(f"  total ${report.total_cost_usd:.2f}")
+for bucket in report.buckets:
+    print(f"   - team={bucket.dimensions.get('team', '')}: ${bucket.cost_usd:.2f}")
+
+# Budget alerts -- thresholds fire as the spend crosses each level (Listing 7.13)
+platform.observability.set_budget_alert(
+    name="engineering-monthly",
+    scope_type="team",
+    scope_value="engineering",
+    limit_usd=10000.0,
+    period="monthly",
+    thresholds=[0.5, 0.8, 1.0],
+    notification_channels=["slack:#platform-alerts"],
+)
+status = platform.observability.get_budget_status("engineering-monthly")
+print(f"  spent ${status.current_spend_usd:.2f} of ${status.alert.limit_usd:.2f}")
+```
+
+### Experimentation Service (Chapter 7)
+
+```python
+from genai_platform import GenAIPlatform
+
+platform = GenAIPlatform()
+
+# Register a versioned target -- prompt, model config, or retrieval config (Listing 7.16)
+target = platform.experiments.register_target(
+    name="patient-intake-v2",
+    version=3,
+    target_type="PROMPT",
+    author="ada",
+    change_description="add insurance confirmation step",
+    metadata={"ticket": "PROD-1247"},
+)
+
+# Curated evaluation dataset (Listing 7.17)
+platform.experiments.create_dataset(
+    name="intake-bench",
+    test_cases=[
+        {
+            "id": "tc-001",
+            "input_query": "What documents do I need for my appointment?",
+            "ideal_response": "Bring photo ID and your insurance card.",
+            "key_elements": ["photo ID", "insurance card"],
+            "tags": ["intake", "documents"],
+        },
+    ],
+    metadata={"owner": "team-a"},
+)
+
+# Offline eval -- streamed: each yield is a CreateEvaluationProgress message (Listing 7.16)
+final = None
+for progress in platform.experiments.run_evaluation(
+    dataset_name="intake-bench",
+    targets=[f"{target.name}:{target.version}"],
+    metrics=["key_elements"],
+    repeats_per_case=1,
+):
+    final = progress
+if final and final.results.target_results:
+    tr = final.results.target_results[0]
+    print(f"  {tr.target_id}  overall_score={tr.overall_score:.2f}")
+
+# Online scoring rule -- continuous quality monitor on production traffic (Listing 7.18)
+platform.experiments.create_scoring_rule(
+    name="intake-quality-monitor",
+    workflow_id="patient-intake",
+    sample_rate=0.1,
+    scorers=[{"name": "key_elements", "type": "key_elements", "required_elements": ["insurance"]}],
+    alert_on={"key_elements": {"below": 0.8, "window": "1h"}},
+)
+
+# A/B test in production (Listing 7.20)
+platform.experiments.create_experiment(
+    name="intake-prompt-ab",
+    workflow_id="patient-intake",
+    variants=[
+        {
+            "name": "control",
+            "traffic_allocation": 0.5,
+            "prompt_variant": {"prompt_name": "patient-intake-v2", "version": 2},
+        },
+        {
+            "name": "treatment",
+            "traffic_allocation": 0.5,
+            "prompt_variant": {"prompt_name": "patient-intake-v2", "version": 3},
+        },
+    ],
+    success_metrics=["resolved"],
+    minimum_sample_size=100,
+)
+assignment = platform.experiments.assign_variant(
+    experiment_name="intake-prompt-ab",
+    assignment_key="user-123",
+)
+# ... run the workflow with the assigned variant, then record the outcome ...
+platform.experiments.record_outcome(
+    experiment_name="intake-prompt-ab",
+    assignment_id=assignment.assignment_id,
+    outcomes={"resolved": 1.0},
+)
+
+results = platform.experiments.get_experiment_results("intake-prompt-ab")
+for c in results.comparisons:
+    print(
+        f"  {c.metric_name}: winner={c.winner} "
+        f"effect={c.effect_size:.3f} p={c.p_value:.3f}"
+    )
+```
+
 ### Workflow Service (Chapter 8)
 
 Decorate a function with `@workflow`, run `genai-platform deploy`, and the
@@ -448,6 +629,21 @@ genai_platform/
 │       ├── models.py          #   Domain dataclasses (PolicyResult, ...)
 │       ├── store.py           #   PolicyStore ABC + InMemoryPolicyStore
 │       └── service.py         #   gRPC servicer
+│   ├── observability/         # Observability Service (Chapter 7, grpc.aio)
+│   │   ├── models.py          #   Domain dataclasses (Span, Generation, Score, ...)
+│   │   ├── metrics.py         #   PlatformMetrics constants (Listing 7.4)
+│   │   ├── store.py           #   ObservabilityStore ABC + InMemoryObservabilityStore
+│   │   └── service.py         #   gRPC servicer (14 RPCs, Listing 7.1)
+│   ├── experiments/           # Experimentation Service (Chapter 7, grpc.aio)
+│   │   ├── models.py          #   Domain dataclasses (ExperimentTarget, Dataset, Variant, ...)
+│   │   ├── scorers.py         #   Scorer ABC + key-element / LLM-judge / retrieval (Listing 7.12)
+│   │   ├── evaluation.py      #   Offline evaluation pipeline
+│   │   ├── ab_testing.py      #   Consistent-hash assignment + Welch's t-test
+│   │   ├── store.py           #   ExperimentStore ABC + InMemoryExperimentStore
+│   │   └── service.py         #   gRPC servicer (20 RPCs, Listing 7.14)
+│   └── shared/
+│       ├── traced_service.py  #   TracedService base + trace_operation/trace_generation (Listing 7.6)
+│       └── observability_client.py  # Buffered async client (Listing 7.9)
 ├── tests/                     # Unit tests (pytest)
 └── examples/                  # Runnable demo scripts
 ```
@@ -503,6 +699,28 @@ Each source file maps to specific listings in [Designing AI Systems](https://www
 | `services/guardrails/service.py` | 6.19 (gRPC servicer), 6.20 (multi-point eval), 6.21 (input validation), 6.23 (output filtering) |
 | `genai_platform/clients/guardrails.py` | 6.19 (policy check), 6.20 (validate input), 6.23 (filter output) |
 | `examples/quickstart_tools.py` | 6.4, 6.7, 6.8, 6.12–6.14 (execute + seeded CredentialStore), 6.19, 6.20, 6.23 (end-to-end demo) |
+| **Observability & Experimentation (Chapter 7)** | |
+| `proto/observability.proto` | 7.1 (ObservabilityService contract), 7.2 (LogEvent / IngestLogs / QueryLogs), 7.5 (Span / Generation / Trace), 7.11 (Score) |
+| `proto/experiments.proto` | 7.14 (ExperimentationService contract), 7.15 (ExperimentTarget / Dataset / Experiment / VariantAssignment / AnnotationQueue) |
+| `services/shared/traced_service.py` | 7.6 (TracedService base, `trace_operation` and `trace_generation` context managers) |
+| `services/shared/observability_client.py` | 7.9 (buffered async telemetry client with periodic flush + push-back on RPC failure) |
+| `services/observability/models.py` | 7.5 (Span / Generation / Trace), 7.11 (Score), 7.13 (CostReport / BudgetAlert / BudgetStatus) |
+| `services/observability/metrics.py` | 7.4 (`PlatformMetrics` standardized counter / histogram names) |
+| `services/observability/store.py` | 7.1 storage primitives -- p50/p95/p99 percentiles, cost aggregations, budget projections, service-health window |
+| `services/observability/service.py` | 7.1 gRPC servicer (Logs, Metrics, Spans, Generations, Traces, Scores, Cost, Budgets, Health) |
+| `services/experiments/scorers.py` | 7.12 (`Scorer` ABC + KeyElement / LLMJudge / RetrievalRelevance scorers) |
+| `services/experiments/evaluation.py` | 7.16 (offline evaluation pipeline: target × dataset × scorers → EvaluationSummary) |
+| `services/experiments/ab_testing.py` | 7.20 (consistent-hash variant assignment + Welch's t-test on outcomes) |
+| `services/experiments/store.py` | 7.14 storage primitives -- targets, datasets, scoring rules, experiments, assignments, outcomes, annotation queues |
+| `services/experiments/service.py` | 7.14 gRPC servicer (target lifecycle, datasets, offline + online eval, A/B tests, annotation) |
+| `services/models/service.py` | 7.3 (`_log_fallback_triggered`), 7.7 (Chat wraps provider call in `trace_generation`), 7.8 (per-request metrics) |
+| `services/models/metrics_publisher.py` | 7.8 (`ModelServiceMetricsPublisher` — emits `model.requests`, `model.latency`, `model.tokens`, `model.cost`) |
+| `genai_platform/clients/observability.py` | 7.10 (`platform.observability.trace_operation`), 7.13 (cost reports + budget alerts), full query/ingest surface |
+| `genai_platform/clients/experiments.py` | 7.16, 7.17, 7.18, 7.19, 7.20 (full experimentation SDK: targets, datasets, evaluations, scoring rules, A/B tests, annotation) |
+| `examples/quickstart_observability.py` | 7.10 (custom span around a workflow op), 7.13 (cost drill-down) |
+| `examples/test_observability_service.py` | 7.5, 7.6, 7.11, 7.2, 7.4, 7.13 (end-to-end traces, scores, logs, metrics, cost, budgets) |
+| `examples/quickstart_experiments.py` | 7.16, 7.17, 7.18, 7.20 (target → dataset → offline eval → scoring rule → A/B test) |
+| `examples/test_experiments_service.py` | 7.16-7.20 (full improvement loop: targets, datasets, scoring rules, experiments, annotation queues) |
 | **Workflow Service (Chapter 8)** | |
 | `genai_platform/workflow.py` | 8.2 (`@workflow` decorator) |
 | `examples/quickstart_workflow.py` | 8.1 (sync workflow example) |
@@ -542,9 +760,10 @@ and references from Kubernetes manifests.
 **Platform services (operate once):** `docker/sessions.Dockerfile`,
 `docker/models.Dockerfile`, `docker/data.Dockerfile`,
 `docker/tools.Dockerfile`, `docker/guardrails.Dockerfile`,
-`docker/gateway.Dockerfile`, `docker/workflow.Dockerfile`. Tag them for
-your registry, push, and apply your own Deployment / Service manifests
-(or the docker-compose stack as-is, for small deployments).
+`docker/gateway.Dockerfile`, `docker/workflow.Dockerfile`,
+`docker/observability.Dockerfile`, `docker/experiments.Dockerfile`. Tag
+them for your registry, push, and apply your own Deployment / Service
+manifests (or the docker-compose stack as-is, for small deployments).
 
 **Workflows (one per AI app):** `genai-platform deploy <file>` writes
 Kubernetes manifests alongside the Docker artifacts:
@@ -572,8 +791,7 @@ containers* is deliberate.
 ## Running Tests
 
 ```bash
-source .venv/bin/activate
-pytest tests/ -v
+uv run pytest tests/ -v
 ```
 
 ## Status
@@ -583,8 +801,9 @@ pytest tests/ -v
 - **Data Service** (Chapter 5): Document ingestion, chunking, vector/hybrid search, pgvector, dynamic parser registration
 - **Tool Service** (Chapter 6): Registration, discovery (namespace/capability/tags), versioning, HTTP execution with credential injection (api_key / bearer / oauth2 / basic) and per-tool timeout + response-size limits, async execution with task polling (Listing 6.16), MCP server registration over streamable HTTP with per-server policy overrides (Listing 6.18), circuit breaker, credential store
 - **Guardrails Service** (Chapter 6): Input validation (prompt injection, PII), output filtering (PII redaction), policy enforcement, violation reporting
-- **API Gateway**: gRPC proxy with service discovery (sessions, models, data, tools, guardrails, workflow); sync client to backends (tools/guardrails use grpc.aio servers, compatible at the wire level); HTTP forwarding to workflow containers (sync / SSE / 202+poll); `/jobs/{id}` proxy to Workflow Service; route table re-hydrates from `WorkflowService.ListRoutes` on startup
+- **API Gateway**: gRPC proxy with service discovery (sessions, models, data, tools, guardrails, workflow, observability, experiments); sync client to backends (tools/guardrails/observability/experiments use grpc.aio servers, compatible at the wire level); HTTP forwarding to workflow containers (sync / SSE / 202+poll); `/jobs/{id}` proxy to Workflow Service; route table re-hydrates from `WorkflowService.ListRoutes` on startup
 - **Workflow Service** (Chapter 8): `@workflow` decorator, FastAPI runtime server (sync / stream / async handlers), gRPC RetryInterceptor, workflow composition (`call`/`call_parallel`), `genai-platform deploy` CLI that builds Docker images and generates Kubernetes manifests
-- **Local platform stack**: `docker compose up` brings up Postgres + all seven services on a shared network; per-service Dockerfiles in `docker/` are the same artifacts a platform team would push to a registry for K8s
-- Observability & Experimentation (Chapter 7): planned -- traces, spans, structured logging, experimentation
+- **Observability Service** (Chapter 7): structured logs, metrics with p50/p95/p99 percentiles, distributed traces, generations (LLM-specific spans with token counts and cost), scores (numeric / categorical / boolean), cost attribution & drill-down, budget alerts with projections, service-health windows; in-process buffered client (`services/shared/observability_client.py`) keeps the request path off the wire
+- **Experimentation Service** (Chapter 7): versioned targets (prompt / model / config / composite) with full lifecycle, curated + production-derived datasets, offline evaluation pipeline with key-element / LLM-judge / retrieval scorers, online sampling rules, A/B experiments with consistent-hash assignment and Welch's t-test, human annotation queues
+- **Local platform stack**: `docker compose up` brings up Postgres + all nine services on a shared network; per-service Dockerfiles in `docker/` are the same artifacts a platform team would push to a registry for K8s
 - AI Assistant (Chapter 9): planned -- agent loop, memory, knowledge, tools, safety, observability

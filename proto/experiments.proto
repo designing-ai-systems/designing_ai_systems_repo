@@ -1,0 +1,421 @@
+// Experimentation Service Protocol Buffer definitions.
+//
+// Book: "Designing AI Systems" (https://www.manning.com/books/designing-ai-systems)
+//   Listing 7.14: ExperimentationService gRPC contract
+//   Listing 7.15: ExperimentTarget / EvaluationSummary
+
+syntax = "proto3";
+
+package experiments;
+
+import "google/protobuf/timestamp.proto";
+
+// Listing 7.14
+service ExperimentationService {
+    // Target lifecycle
+    rpc RegisterTarget(RegisterTargetRequest) returns (ExperimentTarget);
+    rpc GetTargetHistory(GetTargetHistoryRequest) returns (TargetHistory);
+    rpc CompareTargets(CompareTargetsRequest) returns (CompareTargetsResponse);
+
+    // Datasets
+    rpc CreateDataset(CreateDatasetRequest) returns (Dataset);
+    rpc AddTestCases(AddTestCasesRequest) returns (Dataset);
+    rpc AddFromProduction(AddFromProductionRequest) returns (Dataset);
+
+    // Offline evaluation
+    rpc CreateEvaluation(CreateEvaluationRequest) returns (Evaluation);
+    rpc RunEvaluation(RunEvaluationRequest) returns (stream EvaluationProgress);
+    rpc GetEvaluationResults(GetEvaluationResultsRequest) returns (EvaluationResults);
+
+    // Online evaluation
+    rpc CreateScoringRule(CreateScoringRuleRequest) returns (ScoringRule);
+    rpc ListScoringRules(ListScoringRulesRequest) returns (ListScoringRulesResponse);
+    rpc RunScoringRule(RunScoringRuleRequest) returns (RunScoringRuleResponse);
+
+    // A/B testing
+    rpc CreateExperiment(CreateExperimentRequest) returns (Experiment);
+    rpc AssignVariant(AssignVariantRequest) returns (VariantAssignment);
+    rpc RecordOutcome(RecordOutcomeRequest) returns (RecordOutcomeResponse);
+    rpc GetExperimentResults(GetExperimentResultsRequest) returns (ExperimentResults);
+
+    // Annotation queues
+    rpc CreateAnnotationQueue(CreateAnnotationQueueRequest) returns (AnnotationQueue);
+    rpc GetNextAnnotationItem(GetNextAnnotationItemRequest) returns (AnnotationItem);
+    rpc SubmitAnnotation(SubmitAnnotationRequest) returns (SubmitAnnotationResponse);
+}
+
+// ---------- Listing 7.15: experiment target ----------
+
+enum TargetType {
+    TARGET_TYPE_UNSPECIFIED = 0;
+    PROMPT = 1;
+    MODEL_CONFIG = 2;
+    RETRIEVAL_CONFIG = 3;
+}
+
+enum TargetStatus {
+    TARGET_STATUS_UNSPECIFIED = 0;
+    DRAFT = 1;
+    TESTING = 2;
+    ACTIVE = 3;
+    DEPRECATED = 4;
+}
+
+message EvaluationSummary {
+    double overall_score = 1;
+    map<string, double> metric_scores = 2;
+    string evaluation_id = 3;
+    int32 test_cases_evaluated = 4;
+}
+
+message ExperimentTarget {
+    string name = 1;
+    int32 version = 2;
+    TargetType type = 3;
+    string author = 4;
+    string change_description = 5;
+    google.protobuf.Timestamp created_at = 6;
+    TargetStatus status = 7;
+    EvaluationSummary evaluation_summary = 8;
+    map<string, string> metadata = 9;
+}
+
+message RegisterTargetRequest {
+    string name = 1;
+    int32 version = 2;
+    TargetType type = 3;
+    string author = 4;
+    string change_description = 5;
+    map<string, string> metadata = 6;
+}
+
+message GetTargetHistoryRequest {
+    string name = 1;
+}
+
+message TargetHistory {
+    string name = 1;
+    repeated ExperimentTarget versions = 2;
+}
+
+message CompareTargetsRequest {
+    repeated string target_ids = 1;  // "name:version"
+}
+
+message TargetComparisonRow {
+    string target_id = 1;
+    map<string, double> metric_scores = 2;
+    double overall_score = 3;
+}
+
+message CompareTargetsResponse {
+    repeated TargetComparisonRow rows = 1;
+}
+
+// ---------- Datasets ----------
+
+message TestCase {
+    string id = 1;
+    string input_query = 2;
+    string ideal_response = 3;
+    repeated string key_elements = 4;
+    repeated string tags = 5;
+    map<string, string> metadata = 6;
+    string source_trace_id = 7;
+    bool needs_review = 8;
+}
+
+message Dataset {
+    string name = 1;
+    repeated TestCase test_cases = 2;
+    google.protobuf.Timestamp created_at = 3;
+    google.protobuf.Timestamp updated_at = 4;
+    map<string, string> metadata = 5;
+}
+
+message CreateDatasetRequest {
+    string name = 1;
+    repeated TestCase test_cases = 2;
+    map<string, string> metadata = 3;
+}
+
+message AddTestCasesRequest {
+    string name = 1;
+    repeated TestCase test_cases = 2;
+}
+
+message AddFromProductionRequest {
+    string dataset_name = 1;
+    repeated string trace_ids = 2;
+    bool require_human_review = 3;
+}
+
+// ---------- Offline evaluation ----------
+
+message Evaluation {
+    string evaluation_id = 1;
+    string dataset_name = 2;
+    repeated string target_ids = 3;
+    repeated string metrics = 4;
+    google.protobuf.Timestamp created_at = 5;
+    string status = 6;  // "pending" | "running" | "completed" | "failed"
+}
+
+message CreateEvaluationRequest {
+    string dataset_name = 1;
+    repeated string target_ids = 2;
+    repeated string metrics = 3;
+}
+
+message RunEvaluationRequest {
+    string dataset_name = 1;
+    repeated string target_ids = 2;
+    repeated string metrics = 3;
+    int32 repeats_per_case = 4;
+}
+
+message EvaluationProgress {
+    string evaluation_id = 1;
+    string status = 2;
+    int32 completed_cases = 3;
+    int32 total_cases = 4;
+    string current_target = 5;
+    EvaluationResults results = 6;
+}
+
+message PerCaseResult {
+    string target_id = 1;
+    string test_case_id = 2;
+    string output = 3;
+    map<string, double> metric_scores = 4;
+}
+
+message TargetResult {
+    string target_id = 1;
+    map<string, double> metric_scores = 2;
+    double overall_score = 3;
+    int32 cases_run = 4;
+}
+
+message EvaluationResults {
+    string evaluation_id = 1;
+    string dataset_name = 2;
+    repeated TargetResult target_results = 3;
+    repeated PerCaseResult per_case_results = 4;
+}
+
+message GetEvaluationResultsRequest {
+    string evaluation_id = 1;
+}
+
+// ---------- Online scoring ----------
+
+message ScorerConfig {
+    string name = 1;
+    string type = 2;  // "automated" | "llm_judge" | "key_elements" | "retrieval_relevance"
+    string criterion = 3;
+    string judge_model = 4;
+    repeated string required_elements = 5;
+    map<string, string> options = 6;
+}
+
+message AlertCondition {
+    string scorer_name = 1;
+    double threshold_below = 2;
+    double threshold_above = 3;
+    string window = 4;
+}
+
+message ScoringRule {
+    string name = 1;
+    string workflow_id = 2;
+    double sample_rate = 3;
+    repeated ScorerConfig scorers = 4;
+    repeated AlertCondition alerts = 5;
+    google.protobuf.Timestamp created_at = 6;
+}
+
+message CreateScoringRuleRequest {
+    ScoringRule rule = 1;
+}
+
+message ListScoringRulesRequest {
+    string workflow_id = 1;
+}
+
+message ListScoringRulesResponse {
+    repeated ScoringRule rules = 1;
+}
+
+message RunScoringRuleRequest {
+    string rule_name = 1;
+    repeated string trace_ids = 2;
+}
+
+message RunScoringRuleResponse {
+    int32 traces_scored = 1;
+    int32 scores_recorded = 2;
+}
+
+// ---------- A/B testing ----------
+
+message PromptVariant {
+    string prompt_name = 1;
+    int32 version = 2;
+}
+
+message ModelConfigVariant {
+    string model = 1;
+    double temperature = 2;
+    int32 max_tokens = 3;
+}
+
+message RetrievalConfigVariant {
+    string index_name = 1;
+    int32 top_k = 2;
+}
+
+message Variant {
+    string name = 1;
+    double traffic_allocation = 2;
+    PromptVariant prompt_variant = 3;
+    ModelConfigVariant model_config_variant = 4;
+    RetrievalConfigVariant retrieval_config_variant = 5;
+    map<string, string> metadata = 6;
+}
+
+message Experiment {
+    string name = 1;
+    string workflow_id = 2;
+    repeated Variant variants = 3;
+    repeated string success_metrics = 4;
+    int32 minimum_sample_size = 5;
+    google.protobuf.Timestamp created_at = 6;
+    string status = 7;  // "draft" | "running" | "concluded"
+}
+
+message CreateExperimentRequest {
+    Experiment experiment = 1;
+}
+
+message AssignVariantRequest {
+    string experiment_name = 1;
+    string assignment_key = 2;
+    string workflow_id = 3;
+}
+
+message VariantAssignment {
+    string assignment_id = 1;
+    string experiment_name = 2;
+    string assignment_key = 3;
+    Variant variant = 4;
+    google.protobuf.Timestamp assigned_at = 5;
+}
+
+message RecordOutcomeRequest {
+    string experiment_name = 1;
+    string assignment_id = 2;
+    map<string, double> outcomes = 3;
+}
+
+message RecordOutcomeResponse {
+    bool recorded = 1;
+}
+
+message MetricSummary {
+    string metric_name = 1;
+    int32 sample_size = 2;
+    double mean = 3;
+    double std_dev = 4;
+}
+
+message VariantSummary {
+    string variant_name = 1;
+    int32 sample_size = 2;
+    repeated MetricSummary metrics = 3;
+}
+
+message MetricComparison {
+    string metric_name = 1;
+    string winner = 2;
+    double effect_size = 3;
+    double p_value = 4;
+    bool is_significant = 5;
+}
+
+message ExperimentResults {
+    string experiment_name = 1;
+    string status = 2;
+    repeated VariantSummary variant_summaries = 3;
+    repeated MetricComparison comparisons = 4;
+    int32 minimum_sample_size = 5;
+    bool ready_to_conclude = 6;
+}
+
+message GetExperimentResultsRequest {
+    string experiment_name = 1;
+}
+
+// ---------- Annotation queues ----------
+
+message RubricItem {
+    string name = 1;
+    string type = 2;  // "categorical" | "numeric" | "boolean"
+    repeated string options = 3;
+    double min = 4;
+    double max = 5;
+    string description = 6;
+}
+
+message RoutingRule {
+    string condition = 1;
+    string source = 2;
+    double rate = 3;
+}
+
+message AnnotationQueue {
+    string name = 1;
+    string workflow_id = 2;
+    repeated RubricItem rubric = 3;
+    repeated RoutingRule routing_rules = 4;
+    repeated string reviewers = 5;
+    google.protobuf.Timestamp created_at = 6;
+}
+
+message CreateAnnotationQueueRequest {
+    AnnotationQueue queue = 1;
+}
+
+message AnnotationItem {
+    string item_id = 1;
+    string queue_name = 2;
+    string trace_id = 3;
+    string status = 4;       // "pending" | "completed"
+    string assigned_to = 5;
+    google.protobuf.Timestamp added_at = 6;
+}
+
+message GetNextAnnotationItemRequest {
+    string queue_name = 1;
+    string reviewer = 2;
+}
+
+message Annotation {
+    string item_id = 1;
+    string queue_name = 2;
+    string reviewer = 3;
+    map<string, string> categorical_values = 4;
+    map<string, double> numeric_values = 5;
+    map<string, bool> boolean_values = 6;
+    string comment = 7;
+    google.protobuf.Timestamp submitted_at = 8;
+}
+
+message SubmitAnnotationRequest {
+    Annotation annotation = 1;
+}
+
+message SubmitAnnotationResponse {
+    bool recorded = 1;
+    int32 scores_emitted = 2;
+}

@@ -15,8 +15,9 @@ from services.shared.server import SERVICE_PORTS, get_service_port
 # - data: 50054
 # - guardrails: 50055
 # - tools: 50056
-# - evaluation: 50057
 # - workflow: 50058
+# - observability: 50059
+# - experiments: 50060
 
 # Get port for a service (checks env var first, then registry)
 port = get_service_port("sessions")  # Returns 50052 or SESSIONS_PORT if set
