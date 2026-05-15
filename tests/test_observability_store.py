@@ -66,6 +66,61 @@ class TestSpansAndTraces:
         slow_traces = store.query_traces(min_duration_ms=100)
         assert {t.trace_id for t in slow_traces} == {"t-slow"}
 
+    def test_query_traces_time_window_uses_overlap_semantics(self):
+        """A trace that starts before the window or ends after it still matches
+        as long as the trace overlaps the window. The previous implementation
+        required the trace to be fully contained, which silently dropped any
+        trace straddling the window boundary."""
+        store = InMemoryObservabilityStore()
+        window_start = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        window_end = window_start + timedelta(minutes=10)
+
+        # Trace A: starts 1 second before the window, ends mid-window. Overlaps.
+        store.record_spans(
+            [
+                _make_span(
+                    trace_id="t-overlap-start",
+                    start_time=window_start - timedelta(seconds=1),
+                    end_time=window_start + timedelta(minutes=2),
+                )
+            ]
+        )
+        # Trace B: starts mid-window, ends 1 second after the window. Overlaps.
+        store.record_spans(
+            [
+                _make_span(
+                    trace_id="t-overlap-end",
+                    start_time=window_end - timedelta(minutes=2),
+                    end_time=window_end + timedelta(seconds=1),
+                )
+            ]
+        )
+        # Trace C: entirely before the window. Should NOT match.
+        store.record_spans(
+            [
+                _make_span(
+                    trace_id="t-before",
+                    start_time=window_start - timedelta(minutes=10),
+                    end_time=window_start - timedelta(minutes=5),
+                )
+            ]
+        )
+        # Trace D: entirely after the window. Should NOT match.
+        store.record_spans(
+            [
+                _make_span(
+                    trace_id="t-after",
+                    start_time=window_end + timedelta(minutes=5),
+                    end_time=window_end + timedelta(minutes=10),
+                )
+            ]
+        )
+
+        matches = {
+            t.trace_id for t in store.query_traces(start_time=window_start, end_time=window_end)
+        }
+        assert matches == {"t-overlap-start", "t-overlap-end"}
+
 
 class TestLogs:
     def test_ingest_and_query_logs_filter(self):
@@ -232,3 +287,21 @@ class TestServiceHealth:
         health = store.get_service_health("models")
         assert health.span_count == 3
         assert 0.3 <= health.error_rate <= 0.4
+        assert health.status == "degraded"
+
+    def test_health_reports_critical_at_high_error_rate(self):
+        """Error rate at or above 50% should escalate to 'critical', not just
+        'degraded'. The chapter describes three tiers; the implementation
+        previously collapsed both branches into 'degraded'."""
+        store = InMemoryObservabilityStore()
+        store.record_spans(
+            [
+                _make_span(span_id="ok-1", status="OK"),
+                _make_span(span_id="err-1", status="ERROR"),
+                _make_span(span_id="err-2", status="ERROR"),
+                _make_span(span_id="err-3", status="ERROR"),
+            ]
+        )
+        health = store.get_service_health("models")
+        assert health.error_rate >= 0.5
+        assert health.status == "critical"

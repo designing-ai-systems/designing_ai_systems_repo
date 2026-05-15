@@ -148,16 +148,17 @@ class ObservabilityClient:
         return cls(stub=None, autostart=False)
 
     def start(self) -> None:
-        """Start the periodic flush thread (idempotent)."""
-        if self._noop or self._flush_thread is not None:
-            return
-        self._stop_event.clear()
-        self._flush_thread = threading.Thread(
-            target=self._periodic_flush_loop,
-            name="observability-flush",
-            daemon=True,
-        )
-        self._flush_thread.start()
+        """Start the periodic flush thread (idempotent and thread-safe)."""
+        with self._lock:
+            if self._noop or self._flush_thread is not None:
+                return
+            self._stop_event.clear()
+            self._flush_thread = threading.Thread(
+                target=self._periodic_flush_loop,
+                name="observability-flush",
+                daemon=True,
+            )
+            self._flush_thread.start()
 
     def stop(self, *, flush: bool = True) -> None:
         """Stop the periodic flush thread and (optionally) flush remaining data."""

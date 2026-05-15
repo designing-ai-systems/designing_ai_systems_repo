@@ -1,5 +1,6 @@
 """Integration test: Model Service Chat emits a traced Generation (Listing 7.7)."""
 
+import time
 from typing import List
 
 from proto import models_pb2
@@ -118,3 +119,34 @@ class TestModelServiceTracing:
         # Without an observability client the existing tests must still pass.
         svc = ModelService()
         assert svc.observability._noop is True  # noqa: SLF001
+
+    def test_chat_records_real_duration_ms(self):
+        """The MODEL_REQUEST_DURATION histogram (Listing 7.8) is the headline
+        latency metric the chapter centers on. It must reflect the elapsed
+        provider call time, not a hard-coded zero."""
+
+        class SlowProvider(FakeProvider):
+            def chat(self, **kwargs):
+                time.sleep(0.02)  # 20 ms
+                return super().chat(**kwargs)
+
+        client = _RecordingClient()
+        svc = ModelService(observability=client)
+        svc._providers = {"fake": SlowProvider()}
+        svc._metrics_publisher = ModelServiceMetricsPublisher(client)
+
+        request = models_pb2.ChatRequest(model="fake-model")
+        msg = request.messages.add()
+        msg.role = "user"
+        msg.content = "hi"
+        svc.Chat(request, FakeContext())
+
+        duration_samples = [
+            value
+            for name, value, _labels in client.histogram_calls
+            if name == "ai.platform.models.request_duration_ms"
+        ]
+        assert duration_samples, "expected a MODEL_REQUEST_DURATION histogram sample"
+        assert duration_samples[0] >= 15.0, (
+            f"duration_ms should reflect the ~20ms provider call, got {duration_samples[0]}"
+        )

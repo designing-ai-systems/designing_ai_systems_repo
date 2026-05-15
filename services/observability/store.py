@@ -258,13 +258,20 @@ class InMemoryObservabilityStore(ObservabilityStore):
                 if not all(t in trace_tag_set for t in tags):
                     continue
 
+            # Time-window filter uses overlap semantics: a trace matches the
+            # window if any part of its span activity intersects
+            # [start_time, end_time]. The previous "fully contained" semantics
+            # silently dropped any trace straddling the window boundary, which
+            # surprises readers running the chapter examples.
             span_starts = [s.start_time for s in trace.spans if s.start_time]
             span_starts.extend(g.span.start_time for g in trace.generations if g.span.start_time)
             span_ends = [s.end_time for s in trace.spans if s.end_time]
             span_ends.extend(g.span.end_time for g in trace.generations if g.span.end_time)
-            if start_time and span_starts and min(span_starts) < start_time:
+            trace_start = min(span_starts) if span_starts else None
+            trace_end = max(span_ends) if span_ends else trace_start
+            if start_time and trace_end is not None and trace_end < start_time:
                 continue
-            if end_time and span_ends and max(span_ends) > end_time:
+            if end_time and trace_start is not None and trace_start > end_time:
                 continue
 
             if min_duration_ms is not None and trace.total_duration_ms < min_duration_ms:
@@ -588,11 +595,12 @@ class InMemoryObservabilityStore(ObservabilityStore):
             )
         errors = sum(1 for s in recent if s.status == "ERROR")
         rate = errors / max(1, len(recent))
-        status = "healthy"
         if rate >= 0.5:
-            status = "degraded"
+            status = "critical"
         elif rate >= 0.1:
             status = "degraded"
+        else:
+            status = "healthy"
         return ServiceHealth(
             service=service,
             status=status,

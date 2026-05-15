@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import json
 import os
+import time
+import uuid
 from typing import Dict, Iterable, List, Optional
 
 import grpc
@@ -216,6 +218,7 @@ class ModelService(models_pb2_grpc.ModelServiceServicer, BaseServicer, TracedSer
             model=model_name,
             requested_model=request.model,
         ) as gen_ctx:
+            start_ns = time.monotonic_ns()
             domain_resp = provider.chat(
                 model=model_name,
                 messages=domain_msgs,
@@ -224,6 +227,7 @@ class ModelService(models_pb2_grpc.ModelServiceServicer, BaseServicer, TracedSer
                 response_format=response_format,
                 system_prompt=system_prompt,
             )
+            duration_ms = (time.monotonic_ns() - start_ns) / 1_000_000.0
             cost_usd = self._estimate_cost(model_name, domain_resp)
             gen_ctx.update(
                 provider=getattr(provider, "name", domain_resp.provider or ""),
@@ -233,6 +237,9 @@ class ModelService(models_pb2_grpc.ModelServiceServicer, BaseServicer, TracedSer
             )
 
         # Listing 7.8: emit aggregate metrics so dashboards stay current.
+        # cache_hit and fallback_used are False here because the Chat path
+        # doesn't currently run a provider-level cache or fallback chain.
+        # When those land they should be reported through the same labels.
         self._metrics_publisher.publish(
             ModelRequestMetrics(
                 provider=getattr(provider, "name", domain_resp.provider or "unknown"),
@@ -243,7 +250,7 @@ class ModelService(models_pb2_grpc.ModelServiceServicer, BaseServicer, TracedSer
                 prompt_tokens=domain_resp.usage.prompt_tokens if domain_resp.usage else 0,
                 completion_tokens=(domain_resp.usage.completion_tokens if domain_resp.usage else 0),
                 cost_usd=cost_usd,
-                duration_ms=0.0,
+                duration_ms=duration_ms,
             )
         )
 
@@ -502,10 +509,11 @@ class ModelService(models_pb2_grpc.ModelServiceServicer, BaseServicer, TracedSer
         The Gateway seeds ``x-trace-id`` for every request; downstream
         services pass ``x-parent-span-id`` so child spans nest correctly.
         Missing values fall back to fresh defaults so the call still
-        produces a self-contained trace.
+        produces a self-contained trace. ``span_id`` is intentionally
+        left ``None`` here — the current hop hasn't opened its span yet;
+        ``trace_generation`` / ``trace_operation`` create it and yield a
+        child context.
         """
-        import uuid
-
         metadata: Dict[str, str] = {}
         invocation = getattr(context, "invocation_metadata", None)
         if callable(invocation):
@@ -515,7 +523,7 @@ class ModelService(models_pb2_grpc.ModelServiceServicer, BaseServicer, TracedSer
                 metadata = {}
         return TraceContext(
             trace_id=metadata.get("x-trace-id") or uuid.uuid4().hex,
-            span_id=metadata.get("x-parent-span-id") or None,
+            span_id=None,
             parent_span_id=metadata.get("x-parent-span-id") or None,
             workflow_id=metadata.get("x-workflow-id", ""),
             user_id=metadata.get("x-user-id", ""),

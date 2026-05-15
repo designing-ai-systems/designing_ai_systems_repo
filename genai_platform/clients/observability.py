@@ -38,7 +38,7 @@ from services.observability.models import (
     Trace,
 )
 from services.shared.observability_client import ObservabilityClient as InternalObservabilityClient
-from services.shared.traced_service import TraceContext
+from services.shared.traced_service import StatusCode, TraceContext
 
 from .base import BaseClient
 
@@ -163,7 +163,7 @@ class ObservabilityClient(BaseClient):
         try:
             yield child
         except Exception as exc:
-            self._buffered.end_span(span.span_id, status="ERROR", error_message=str(exc))  # type: ignore[arg-type]
+            self._buffered.end_span(span.span_id, status=StatusCode.ERROR, error_message=str(exc))
             raise
         self._buffered.end_span(span.span_id)
 
