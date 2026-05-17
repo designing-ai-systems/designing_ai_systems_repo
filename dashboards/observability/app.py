@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import pandas as pd
 import plotly.express as px
@@ -403,7 +403,7 @@ def _render_trace_detail(trace: Any, *, key_prefix: str) -> None:
     jump_cols = st.columns(2)
     if jump_cols[0].button("📝 View logs for this trace", key=f"{key_prefix}-logs"):
         st.session_state["_logs_trace_id_filter"] = trace.trace_id
-        st.switch_page("Logs")
+        _switch_to("Logs")
     if jump_cols[1].button("📈 Metrics around this window", key=f"{key_prefix}-metrics"):
         spans_start = [s.start_time for s in trace.spans if s.start_time]
         spans_end = [s.end_time for s in trace.spans if s.end_time]
@@ -413,7 +413,7 @@ def _render_trace_detail(trace: Any, *, key_prefix: str) -> None:
                 int((max(spans_end) - min(spans_start)).total_seconds() / 3600) + 1,
             )
             st.session_state["_metrics_hours_back"] = window_hours
-        st.switch_page("Metrics")
+        _switch_to("Metrics")
 
     # ------------------------------------------------------------------
     # 3) Input / output (Trace primitive definition, section 7.2)
@@ -491,11 +491,15 @@ def _render_trace_detail(trace: Any, *, key_prefix: str) -> None:
                 fig.data[0].marker.line.color = border_color  # default for trace 0
         # Apply per-bar borders by iterating over the traces produced by
         # plotly (one trace per Service legend entry).
+        # Transparent fallback so plotly accepts the list (it rejects None
+        # entries). Bars that don't need a visible border get this colour
+        # paired with width=0, so it never actually renders.
+        invisible = "rgba(0,0,0,0)"
         for fig_trace in fig.data:
             svc = fig_trace.name
             # `fig_trace.y` holds the Step labels assigned to this colour.
             labels = list(fig_trace.y)
-            line_colors: List[Optional[str]] = []
+            line_colors: List[str] = []
             line_widths: List[int] = []
             for label in labels:
                 match = next(
@@ -503,7 +507,7 @@ def _render_trace_detail(trace: Any, *, key_prefix: str) -> None:
                     None,
                 )
                 if match is None:
-                    line_colors.append(None)
+                    line_colors.append(invisible)
                     line_widths.append(0)
                     continue
                 if match["Status"] == "ERROR":
@@ -513,7 +517,7 @@ def _render_trace_detail(trace: Any, *, key_prefix: str) -> None:
                     line_colors.append("#1f2937")
                     line_widths.append(2)
                 else:
-                    line_colors.append(None)
+                    line_colors.append(invisible)
                     line_widths.append(0)
             fig_trace.marker.line.color = line_colors
             fig_trace.marker.line.width = line_widths
@@ -609,10 +613,19 @@ def _render_trace_detail(trace: Any, *, key_prefix: str) -> None:
                 or _SCORE_DESCRIPTIONS.get(s.name)
                 or "no description registered — set `comment` on `record_score()`"
             )
+            # Coerce value to str so the column has a single dtype.
+            # Pandas/pyarrow can't render a mixed-type column (0.85 + 'correct'
+            # + 0.82) and Streamlit's st.dataframe crashes when it tries.
+            if isinstance(s.value, bool):
+                value_display = "true" if s.value else "false"
+            elif isinstance(s.value, (int, float)):
+                value_display = f"{float(s.value):.4g}"
+            else:
+                value_display = str(s.value or "")
             score_rows.append(
                 {
                     "name": s.name,
-                    "value": s.value,
+                    "value": value_display,
                     "source": s.source,
                     "description": description,
                     "span_id": s.span_id,
@@ -887,15 +900,17 @@ def page_sessions() -> None:
 
     # Summary table of all traces in the session.
     st.caption(
-        "Each row is one trace — a single user-assistant turn in this "
-        "conversation. Expand a turn below to see its full waterfall."
+        "Each row is one **trace** — a single user request and the "
+        "assistant's response. A multi-turn conversation produces one "
+        "trace per turn. Expand a trace below to see the full waterfall "
+        "of services that handled that request."
     )
     summary_rows = []
     for i, trace in enumerate(session_traces, start=1):
         span_starts = [s.start_time for s in trace.spans if s.start_time]
         summary_rows.append(
             {
-                "turn": i,
+                "#": i,
                 "trace_id": trace.trace_id,
                 "started_at": min(span_starts) if span_starts else None,
                 "duration_ms": round(trace.total_duration_ms, 1),
@@ -908,14 +923,14 @@ def page_sessions() -> None:
         )
     st.dataframe(pd.DataFrame(summary_rows), width="stretch")
 
-    # Per-turn waterfall — one expander per trace. First one open by default
-    # so the dashboard immediately surfaces the conversation's first turn.
+    # Per-trace expanders. First one open by default so the dashboard
+    # immediately surfaces the conversation's first turn.
     st.markdown("---")
-    st.markdown("### Per-turn detail")
+    st.markdown("### Per-trace detail")
     for i, trace in enumerate(session_traces, start=1):
         short_id = trace.trace_id[:8]
         header = (
-            f"Turn {i} — {short_id} — "
+            f"Trace #{i} — {short_id} — "
             f"{trace.total_duration_ms:,.0f} ms — ${trace.total_cost_usd:,.4f}"
         )
         with st.expander(header, expanded=(i == 1)):
@@ -973,7 +988,7 @@ def page_logs() -> None:
     if trace_id:
         if st.button("🌊 Back to this trace", key=f"back-{trace_id}"):
             st.session_state["_traces_focus_id"] = trace_id
-            st.switch_page("Traces")
+            _switch_to("Traces")
 
 
 # ---------------------------------------------------------------------------
@@ -983,17 +998,32 @@ def page_logs() -> None:
 
 def main() -> None:
     st.set_page_config(page_title="GenAI Platform — Observability", layout="wide")
-    pg = st.navigation(
-        [
-            st.Page(page_sessions, title="Sessions", icon="🧵"),
-            st.Page(page_traces, title="Traces", icon="🌊"),
-            st.Page(page_cost, title="Cost", icon="💸"),
-            st.Page(page_metrics, title="Metrics", icon="📈"),
-            st.Page(page_service_health, title="Service Health", icon="❤️"),
-            st.Page(page_logs, title="Logs", icon="📝"),
-        ]
-    )
+    # Build StreamlitPage objects once and cache on the module so the
+    # cross-page jump buttons (st.switch_page) can pass the page object
+    # directly — switch_page rejects bare title strings under st.navigation.
+    pages = {
+        "Sessions": st.Page(page_sessions, title="Sessions", icon="🧵"),
+        "Traces": st.Page(page_traces, title="Traces", icon="🌊"),
+        "Cost": st.Page(page_cost, title="Cost", icon="💸"),
+        "Metrics": st.Page(page_metrics, title="Metrics", icon="📈"),
+        "Service Health": st.Page(page_service_health, title="Service Health", icon="❤️"),
+        "Logs": st.Page(page_logs, title="Logs", icon="📝"),
+    }
+    st.session_state["_pages"] = pages
+    pg = st.navigation(list(pages.values()))
     pg.run()
+
+
+def _switch_to(page_name: str) -> None:
+    """Switch to a page by name, using the StreamlitPage object that ``main``
+    cached. Streamlit's ``switch_page`` doesn't accept bare title strings
+    when pages are declared via ``st.navigation``; only the Page object or
+    a file path works."""
+    pages = st.session_state.get("_pages") or {}
+    target = pages.get(page_name)
+    if target is None:
+        return
+    st.switch_page(target)
 
 
 if __name__ == "__main__":
