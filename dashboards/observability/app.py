@@ -2,9 +2,19 @@
 Streamlit dashboard over the Observability Service.
 
 Reads through the platform SDK — the same path any developer would use.
-Multi-page layout via st.navigation: Traces, Cost, Metrics, Service
-Health, and Logs. Each page is intentionally short so a reader can see
-exactly which SDK calls power which view.
+Six pages via st.navigation:
+
+  - Sessions:  Multi-turn conversations (groups traces by session_id)
+  - Traces:    Single requests, span/generation waterfall, attached scores
+  - Cost:      Drill-down by team / workflow / model (Listing 7.13)
+  - Metrics:   p50 / p95 / p99 over the lookback window
+  - Health:    Span error rates per platform service
+  - Logs:      Structured log search by trace_id / service / event_type
+
+Sessions are a "grouping primitive above traces" (Chapter 7 section 7.3).
+The Observability Service doesn't manage session lifecycle — that's the
+Session Service from Chapter 4. The Trace.session_id field is what makes
+this page possible without any new RPC.
 
 Book: "Designing AI Systems" (https://www.manning.com/books/designing-ai-systems)
   - Listing 7.1:  Observability Service contract
@@ -242,6 +252,120 @@ def page_service_health() -> None:
     st.dataframe(pd.DataFrame(rows), width="stretch")
 
 
+def page_sessions() -> None:
+    st.title("Sessions")
+    st.caption(
+        "Multi-turn conversations grouped by session_id. The Observability "
+        "Service doesn't manage session lifecycle (that's the Session Service "
+        "from Chapter 4); this page just groups traces by their session_id "
+        "field — Chapter 7, section 7.3."
+    )
+
+    platform = get_platform()
+    with st.sidebar:
+        hours_back = st.slider("Lookback (hours)", min_value=1, max_value=168, value=24)
+        user_id = st.text_input("Filter by user_id")
+        limit = st.number_input("Trace limit", min_value=10, max_value=2000, value=500)
+
+    start_time, end_time = _utc_window(hours_back)
+    traces = platform.observability.query_traces(
+        start_time=start_time,
+        end_time=end_time,
+        user_id=user_id or "",
+        limit=int(limit),
+    )
+
+    if not traces:
+        st.info("No traces in the lookback window.")
+        return
+
+    # Bucket traces by session_id (traces without a session_id are dropped
+    # from this view — they're visible on the Traces page instead).
+    sessions: Dict[str, List[Any]] = {}
+    for trace in traces:
+        if not trace.session_id:
+            continue
+        sessions.setdefault(trace.session_id, []).append(trace)
+
+    if not sessions:
+        st.info(
+            "No traces in the window carried a session_id. "
+            "Sessions show up here once a workflow propagates one "
+            "(e.g. the Claw assistant via platform.sessions.get_or_create)."
+        )
+        return
+
+    rows = []
+    for session_id, session_traces in sessions.items():
+        starts = [
+            min(
+                (s.start_time for s in t.spans if s.start_time),
+                default=None,
+            )
+            for t in session_traces
+        ]
+        ends = [
+            max(
+                (s.end_time for s in t.spans if s.end_time),
+                default=None,
+            )
+            for t in session_traces
+        ]
+        starts = [s for s in starts if s is not None]
+        ends = [e for e in ends if e is not None]
+        rows.append(
+            {
+                "session_id": session_id,
+                "turns": len(session_traces),
+                "first_trace_at": min(starts) if starts else None,
+                "last_trace_at": max(ends) if ends else None,
+                "total_cost_usd": round(sum(t.total_cost_usd for t in session_traces), 4),
+                "total_tokens": sum(t.total_tokens for t in session_traces),
+                "spans": sum(len(t.spans) for t in session_traces),
+                "generations": sum(len(t.generations) for t in session_traces),
+                "scores": sum(len(t.scores) for t in session_traces),
+                "user_id": next((t.user_id for t in session_traces if t.user_id), ""),
+                "workflow_id": next((t.workflow_id for t in session_traces if t.workflow_id), ""),
+            }
+        )
+
+    df = pd.DataFrame(rows).sort_values("last_trace_at", ascending=False)
+    st.dataframe(df, width="stretch")
+
+    chosen = st.selectbox(
+        "Drill into a session:",
+        options=[""] + df["session_id"].tolist(),
+        format_func=lambda x: x or "—",
+    )
+    if not chosen:
+        return
+
+    st.subheader(f"Session {chosen}")
+    far_future = datetime.max.replace(tzinfo=timezone.utc)
+    session_traces = sorted(
+        sessions[chosen],
+        key=lambda t: min((s.start_time for s in t.spans if s.start_time), default=far_future),
+    )
+
+    detail_rows = []
+    for i, trace in enumerate(session_traces, start=1):
+        span_starts = [s.start_time for s in trace.spans if s.start_time]
+        detail_rows.append(
+            {
+                "turn": i,
+                "trace_id": trace.trace_id,
+                "started_at": min(span_starts) if span_starts else None,
+                "duration_ms": round(trace.total_duration_ms, 1),
+                "cost_usd": round(trace.total_cost_usd, 4),
+                "tokens": trace.total_tokens,
+                "spans": len(trace.spans),
+                "generations": len(trace.generations),
+                "scores": ", ".join(f"{s.name}={s.value}" for s in trace.scores),
+            }
+        )
+    st.dataframe(pd.DataFrame(detail_rows), width="stretch")
+
+
 def page_logs() -> None:
     st.title("Logs")
     st.caption("Structured-log search by trace_id, service, or event_type.")
@@ -283,6 +407,7 @@ def main() -> None:
     st.set_page_config(page_title="GenAI Platform — Observability", layout="wide")
     pg = st.navigation(
         [
+            st.Page(page_sessions, title="Sessions", icon="🧵"),
             st.Page(page_traces, title="Traces", icon="🌊"),
             st.Page(page_cost, title="Cost", icon="💸"),
             st.Page(page_metrics, title="Metrics", icon="📈"),
