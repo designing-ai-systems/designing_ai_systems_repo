@@ -13,24 +13,24 @@ The Session Service manages conversation history and model-managed memory, enabl
 
 ### 1. Install Dependencies
 ```bash
-pip install -r requirements.txt
+uv sync
 ```
 
 ### 2. Generate Protocol Buffers
 ```bash
-python proto/generate.py
+uv run python proto/generate.py
 ```
 
 ### 3. Run Tests
 
 Comprehensive test suite:
 ```bash
-python examples/test_session_service.py
+uv run python examples/test_session_service.py
 ```
 
 Or see Session + Model integration:
 ```bash
-python examples/quickstart_conversation.py
+uv run python examples/quickstart_conversation.py
 ```
 
 ## Manual Service Startup
@@ -39,17 +39,17 @@ If you want to run services separately:
 
 **Terminal 1 - Session Service**:
 ```bash
-python services/sessions/main.py
+uv run python -m services.sessions.main
 ```
 
 **Terminal 2 - API Gateway**:
 ```bash
-python services/gateway/main.py
+uv run python -m services.gateway.main
 ```
 
 **Terminal 3 - Run tests**:
 ```bash
-python examples/test_session_service.py
+uv run python examples/test_session_service.py
 ```
 
 ## Features
@@ -86,8 +86,8 @@ For production deployments with persistence and reliability.
 
 **Setup:**
 ```bash
-# Install PostgreSQL driver
-pip install 'psycopg[binary]'
+# Install with the postgres extra so the driver lands in the venv.
+uv sync --extra postgres
 
 # Set environment variables
 export SESSION_STORAGE=postgres

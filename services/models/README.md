@@ -16,12 +16,12 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for detailed design documentation.
 
 ### 1. Install Dependencies
 ```bash
-pip install -r requirements.txt
+uv sync
 ```
 
 ### 2. Generate Protocol Buffers
 ```bash
-python proto/generate.py
+uv run python proto/generate.py
 ```
 
 ### 3. Configure API Keys
@@ -42,7 +42,7 @@ export ANTHROPIC_API_KEY=your_key
 
 The easiest way to test everything:
 ```bash
-python examples/quickstart_models.py
+uv run python examples/quickstart_models.py
 ```
 
 This automatically starts all services (Session, Model, Gateway) and runs basic tests.
@@ -53,22 +53,22 @@ If you want to run services separately:
 
 **Terminal 1 - Session Service**:
 ```bash
-python services/sessions/main.py
+uv run python -m services.sessions.main
 ```
 
 **Terminal 2 - Model Service**:
 ```bash
-python services/models/main.py
+uv run python -m services.models.main
 ```
 
 **Terminal 3 - API Gateway**:
 ```bash
-python services/gateway/main.py
+uv run python -m services.gateway.main
 ```
 
 **Terminal 4 - Run tests**:
 ```bash
-python examples/test_model_service.py
+uv run python examples/test_model_service.py
 ```
 
 ## Features

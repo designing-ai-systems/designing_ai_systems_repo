@@ -105,7 +105,7 @@ class TestDockerfile:
         text = generate_dockerfile(items[0])
         # Base image + runtime entrypoint per Listing 8.24.
         assert "FROM python:" in text
-        assert "RUN pip install" in text
+        assert "RUN uv sync" in text
         assert "CMD" in text and "genai_platform.runtime.server" in text
         assert "WORKFLOW_NAME=patient_intake" in text
 

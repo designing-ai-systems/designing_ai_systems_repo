@@ -125,7 +125,8 @@ services:
       # (AddFromProduction, RunScoringRule, SubmitAnnotation).
       OBSERVABILITY_SERVICE_ADDR: observability:50059
     depends_on:
-      - observability
+      observability:
+        condition: service_healthy
 
   gateway:
     build:
@@ -144,15 +145,26 @@ services:
       WORKFLOW_SERVICE_ADDR: workflow:50058
       OBSERVABILITY_SERVICE_ADDR: observability:50059
       EXPERIMENTS_SERVICE_ADDR: experiments:50060
+    # Wait for each backend's TCP port to be ready before the gateway tries
+    # to forward calls. Avoids the cold-start gRPC errors the gateway logs
+    # used to swallow when it raced ahead of the services it depends on.
     depends_on:
-      - sessions
-      - models
-      - data
-      - tools
-      - guardrails
-      - workflow
-      - observability
-      - experiments
+      sessions:
+        condition: service_healthy
+      models:
+        condition: service_healthy
+      data:
+        condition: service_healthy
+      tools:
+        condition: service_healthy
+      guardrails:
+        condition: service_healthy
+      workflow:
+        condition: service_healthy
+      observability:
+        condition: service_healthy
+      experiments:
+        condition: service_healthy
 
 volumes:
   postgres_data:
