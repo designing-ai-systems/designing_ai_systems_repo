@@ -37,6 +37,14 @@ genai-platform = "genai_platform.cli.deploy:main"
 postgres = [
     "psycopg2-binary>=2.9.0",
 ]
+# Streamlit-based read-side dashboards over the observability and
+# experiments services. Only the dashboard containers (and a developer
+# who wants to run them locally) need these — `uv sync --extra dashboards`.
+dashboards = [
+    "streamlit>=1.40.0",
+    "pandas>=2.0.0",
+    "plotly>=5.20.0",
+]
 
 # PEP 735 dev dependency group — `uv sync` installs this by default
 # (skip with `uv sync --no-dev`).

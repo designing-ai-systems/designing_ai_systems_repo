@@ -33,6 +33,7 @@ services:
       - ./services/sessions/schema.sql:/docker-entrypoint-initdb.d/01-sessions.sql:ro
       - ./services/data/schema.sql:/docker-entrypoint-initdb.d/02-data.sql:ro
       - ./services/workflow/schema.sql:/docker-entrypoint-initdb.d/03-workflow.sql:ro
+      - ./services/observability/schema.sql:/docker-entrypoint-initdb.d/04-observability.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d genai_platform"]
       interval: 5s
@@ -110,6 +111,14 @@ services:
       context: .
       dockerfile: docker/observability.Dockerfile
     image: genai-platform/observability:dev
+    environment:
+      # Persist traces, generations, logs, metrics, and scores to
+      # Postgres. Remove this var to fall back to the ephemeral
+      # in-memory store.
+      OBSERVABILITY_POSTGRES_DSN: postgresql://postgres@postgres/genai_platform
+    depends_on:
+      postgres:
+        condition: service_healthy
     # The Observability Service has no upstream dependencies; it is the
     # bottom of the platform telemetry stack. Spans, generations, logs,
     # metrics, and scores are buffered + flushed by the calling
@@ -165,6 +174,20 @@ services:
         condition: service_healthy
       experiments:
         condition: service_healthy
+
+  observability-dashboard:
+    build:
+      context: .
+      dockerfile: docker/observability_dashboard.Dockerfile
+    image: genai-platform/observability-dashboard:dev
+    environment:
+      GENAI_GATEWAY_URL: gateway:50051
+      GENAI_GATEWAY_INSECURE: "1"
+    ports:
+      - "8501:8501"
+    depends_on:
+      gateway:
+        condition: service_started
 
 volumes:
   postgres_data:
