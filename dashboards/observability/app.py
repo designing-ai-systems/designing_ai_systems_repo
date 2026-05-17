@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 import plotly.express as px
@@ -54,6 +54,25 @@ def _utc_window(hours: int) -> tuple[datetime, datetime]:
     end = datetime.now(timezone.utc)
     start = end - timedelta(hours=hours)
     return start, end
+
+
+# Stable colour assignment per platform service so a reader can scan any
+# trace and recognise "blue means data, orange means guardrails." Generations
+# share the models colour but get a heavier border so they pop out as the
+# chapter's "where most cost + latency lives."
+_SERVICE_COLORS: Dict[str, str] = {
+    "gateway": "#6b7280",
+    "sessions": "#14b8a6",
+    "data": "#3b82f6",
+    "guardrails": "#f59e0b",
+    "models": "#8b5cf6",
+    "tools": "#ec4899",
+    "workflow": "#10b981",
+    "observability": "#0ea5e9",
+    "experiments": "#a855f7",
+    "sdk": "#94a3b8",
+}
+_SERVICE_COLOR_FALLBACK = "#94a3b8"
 
 
 # ---------------------------------------------------------------------------
@@ -249,6 +268,27 @@ def _render_trace_detail(trace: Any, *, key_prefix: str) -> None:
     meta_cols[1].markdown(f"**user_id:** `{trace.user_id or '—'}`")
     meta_cols[2].markdown(f"**session_id:** `{trace.session_id or '—'}`")
 
+    # Services-touched chip row — colored pills, one per unique service in
+    # this trace. A quick read of "which parts of the platform handled this
+    # request" without scanning the waterfall.
+    services_touched: List[str] = []
+    for s in trace.spans:
+        if s.service and s.service not in services_touched:
+            services_touched.append(s.service)
+    for g in trace.generations:
+        if g.span.service and g.span.service not in services_touched:
+            services_touched.append(g.span.service)
+    if services_touched:
+        pills = " ".join(
+            (
+                f'<span style="background:{_SERVICE_COLORS.get(svc, _SERVICE_COLOR_FALLBACK)};'
+                f"color:white;padding:2px 8px;border-radius:9999px;"
+                f'font-size:0.85em;margin-right:6px;">{svc}</span>'
+            )
+            for svc in services_touched
+        )
+        st.markdown(f"🌊 **Services touched:** {pills}", unsafe_allow_html=True)
+
     # ------------------------------------------------------------------
     # 2) Cross-page jump buttons (Figure 7.7: trace → logs → metrics)
     # ------------------------------------------------------------------
@@ -306,29 +346,115 @@ def _render_trace_detail(trace: Any, *, key_prefix: str) -> None:
             waterfall_rows.append(
                 {
                     "Step": label,
-                    "Service": span.service,
+                    "Service": span.service or "unknown",
                     "Kind": kind,
                     "Start": span.start_time,
                     "Finish": span.end_time or span.start_time,
                     "Duration (ms)": round(span.duration_ms, 1),
                     "Status": span.status,
+                    "IsGeneration": item["kind"] == "generation",
                 }
             )
         df_w = pd.DataFrame(waterfall_rows)
+        # Color by Service so the same service is always the same colour
+        # across every trace (gateway gray, data blue, etc.).
+        services_in_trace = list(df_w["Service"].unique())
+        color_map = {
+            svc: _SERVICE_COLORS.get(svc, _SERVICE_COLOR_FALLBACK) for svc in services_in_trace
+        }
         fig = px.timeline(
             df_w,
             x_start="Start",
             x_end="Finish",
             y="Step",
-            color="Kind",
-            hover_data=["Service", "Duration (ms)", "Status"],
-            color_discrete_map={"span": "#5470c6"},
+            color="Service",
+            hover_data=["Kind", "Duration (ms)", "Status"],
+            color_discrete_map=color_map,
         )
+        # Per-bar styling: generations get a thicker border to stand out;
+        # ERROR spans get a red border so failures pop visually.
+        for i, row in enumerate(waterfall_rows):
+            border_color = (
+                "#dc2626"
+                if row["Status"] == "ERROR"
+                else ("#1f2937" if row["IsGeneration"] else None)
+            )
+            if border_color:
+                fig.data[0].marker.line.color = border_color  # default for trace 0
+        # Apply per-bar borders by iterating over the traces produced by
+        # plotly (one trace per Service legend entry).
+        for fig_trace in fig.data:
+            svc = fig_trace.name
+            # `fig_trace.y` holds the Step labels assigned to this colour.
+            labels = list(fig_trace.y)
+            line_colors: List[Optional[str]] = []
+            line_widths: List[int] = []
+            for label in labels:
+                match = next(
+                    (r for r in waterfall_rows if r["Step"] == label and r["Service"] == svc),
+                    None,
+                )
+                if match is None:
+                    line_colors.append(None)
+                    line_widths.append(0)
+                    continue
+                if match["Status"] == "ERROR":
+                    line_colors.append("#dc2626")
+                    line_widths.append(3)
+                elif match["IsGeneration"]:
+                    line_colors.append("#1f2937")
+                    line_widths.append(2)
+                else:
+                    line_colors.append(None)
+                    line_widths.append(0)
+            fig_trace.marker.line.color = line_colors
+            fig_trace.marker.line.width = line_widths
         fig.update_yaxes(autorange="reversed", title=None)
         fig.update_layout(height=max(160, 32 * len(df_w) + 80), margin=dict(l=10, r=10, t=20, b=10))
         st.plotly_chart(fig, width="stretch", key=f"{key_prefix}-waterfall")
+        st.caption(
+            "Each bar is one span or generation. Color = service. A thick "
+            "dark border marks the LLM **generation**. A red border marks "
+            "an **ERROR** span."
+        )
     else:
         st.info("No spans recorded on this trace.")
+
+    # Cost split across services — visually proves the chapter's claim
+    # that the generation is where the money goes.
+    cost_rows: List[Dict[str, Any]] = []
+    by_service: Dict[str, float] = {}
+    for g in trace.generations:
+        svc = g.span.service or "models"
+        by_service[svc] = by_service.get(svc, 0.0) + (g.cost_usd or 0.0)
+    # Non-generation spans don't carry cost; include them with $0 so the
+    # bar chart visibly shows the disparity.
+    for s in trace.spans:
+        by_service.setdefault(s.service or "unknown", 0.0)
+    for svc, cost in sorted(by_service.items(), key=lambda kv: -kv[1]):
+        cost_rows.append({"service": svc, "cost_usd": round(cost, 6)})
+    if cost_rows and any(r["cost_usd"] > 0 for r in cost_rows):
+        st.markdown("### Cost split across services")
+        df_cost = pd.DataFrame(cost_rows)
+        fig_cost = px.bar(
+            df_cost,
+            x="cost_usd",
+            y="service",
+            orientation="h",
+            color="service",
+            color_discrete_map={
+                row["service"]: _SERVICE_COLORS.get(row["service"], _SERVICE_COLOR_FALLBACK)
+                for row in cost_rows
+            },
+        )
+        fig_cost.update_layout(
+            height=max(120, 28 * len(cost_rows) + 60),
+            margin=dict(l=10, r=10, t=10, b=10),
+            showlegend=False,
+            yaxis=dict(autorange="reversed", title=None),
+            xaxis=dict(title="cost (USD)"),
+        )
+        st.plotly_chart(fig_cost, width="stretch", key=f"{key_prefix}-cost-split")
 
     # ------------------------------------------------------------------
     # 5) Generations — the LLM-specific fields the book calls out
