@@ -13,7 +13,9 @@ COPY proto/ ./proto/
 COPY services/ ./services/
 
 # uv sync installs the project + locked deps into /app/.venv reproducibly.
-RUN uv sync --frozen --no-dev
+# `--extra postgres` pulls in psycopg2 so the service can use the
+# Postgres-backed store when OBSERVABILITY_POSTGRES_DSN is set.
+RUN uv sync --frozen --no-dev --extra postgres
 
 # Put the venv's python on PATH so the CMD resolves to it.
 ENV PATH="/app/.venv/bin:$PATH"

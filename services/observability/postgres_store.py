@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -318,6 +319,10 @@ class PostgresObservabilityStore(ObservabilityStore):
             return 0
         with self.conn.cursor() as cur:
             for evt in events:
+                # Same defensive UUID as record_score — an empty event_id
+                # would collide via ON CONFLICT and silently drop the event.
+                if not evt.event_id:
+                    evt.event_id = uuid.uuid4().hex
                 cur.execute(
                     """INSERT INTO logs (
                            event_id, trace_id, span_id, timestamp, service,
@@ -490,6 +495,11 @@ class PostgresObservabilityStore(ObservabilityStore):
     # Scores
     # ------------------------------------------------------------------
     def record_score(self, score: Score) -> str:
+        # Without a fresh UUID, every score the SDK records (which never
+        # sets score_id) would collide on the empty-string PK via
+        # ON CONFLICT and overwrite the previous row.
+        if not score.score_id:
+            score.score_id = uuid.uuid4().hex
         kind = "numeric"
         numeric_value: Optional[float] = None
         string_value: Optional[str] = None
