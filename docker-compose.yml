@@ -34,6 +34,7 @@ services:
       - ./services/data/schema.sql:/docker-entrypoint-initdb.d/02-data.sql:ro
       - ./services/workflow/schema.sql:/docker-entrypoint-initdb.d/03-workflow.sql:ro
       - ./services/observability/schema.sql:/docker-entrypoint-initdb.d/04-observability.sql:ro
+      - ./services/experiments/schema.sql:/docker-entrypoint-initdb.d/05-experiments.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d genai_platform"]
       interval: 5s
@@ -133,8 +134,13 @@ services:
       # Reach the Observability Service for trace/score lookups
       # (AddFromProduction, RunScoringRule, SubmitAnnotation).
       OBSERVABILITY_SERVICE_ADDR: observability:50059
+      # Persist targets, datasets, evaluations, scoring rules,
+      # experiments, assignments, outcomes, and annotations.
+      EXPERIMENTS_POSTGRES_DSN: postgresql://postgres@postgres/genai_platform
     depends_on:
       observability:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
 
   gateway:
@@ -185,6 +191,20 @@ services:
       GENAI_GATEWAY_INSECURE: "1"
     ports:
       - "8501:8501"
+    depends_on:
+      gateway:
+        condition: service_started
+
+  experiments-dashboard:
+    build:
+      context: .
+      dockerfile: docker/experiments_dashboard.Dockerfile
+    image: genai-platform/experiments-dashboard:dev
+    environment:
+      GENAI_GATEWAY_URL: gateway:50051
+      GENAI_GATEWAY_INSECURE: "1"
+    ports:
+      - "8502:8502"
     depends_on:
       gateway:
         condition: service_started
