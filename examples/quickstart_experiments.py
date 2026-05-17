@@ -11,24 +11,19 @@ from __future__ import annotations
 
 import os
 import sys
-import threading
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import grpc
 
+from examples._bootstrap import start_services_unless_running
 from genai_platform import GenAIPlatform
 from proto import observability_pb2_grpc
 from services.experiments.service import ExperimentationServiceImpl
 from services.gateway.main import main as start_gateway
 from services.observability.service import ObservabilityServiceImpl
 from services.shared.server import run_aio_service_main
-
-
-def start_in_thread(target, name):
-    threading.Thread(target=target, daemon=True, name=name).start()
 
 
 def start_observability():
@@ -168,14 +163,9 @@ def main():
     print("  Quickstart: platform.experiments")
     print("=" * 60)
     os.environ.setdefault("OBSERVABILITY_SERVICE_ADDR", "localhost:50059")
-    print("\nStarting Observability + Experimentation services and Gateway...")
-    start_in_thread(start_observability, "ObservabilityService")
-    time.sleep(1)
-    start_in_thread(start_experiments, "ExperimentsService")
-    time.sleep(1)
-    start_in_thread(start_gateway, "Gateway")
-    time.sleep(1)
-    print("Services ready.")
+    started = start_services_unless_running([start_observability, start_experiments, start_gateway])
+    if started:
+        print("Services ready.")
 
     platform = GenAIPlatform()
     try:
