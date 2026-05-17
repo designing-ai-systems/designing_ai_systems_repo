@@ -332,6 +332,9 @@ class InMemoryExperimentStore(ExperimentStore):
             items = self._queue_items.get(queue_name, [])
             for item in items:
                 if item.status == "pending":
+                    # Lock the item to this reviewer so a concurrent reviewer
+                    # picks up the next pending item instead of the same one.
+                    item.status = "assigned"
                     item.assigned_to = reviewer
                     return item
             return None

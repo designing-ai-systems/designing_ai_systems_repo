@@ -16,6 +16,11 @@ service ExperimentationService {
     rpc RegisterTarget(RegisterTargetRequest) returns (ExperimentTarget);
     rpc GetTargetHistory(GetTargetHistoryRequest) returns (TargetHistory);
     rpc CompareTargets(CompareTargetsRequest) returns (CompareTargetsResponse);
+    // PromoteTarget moves a target to ACTIVE and auto-deprecates the
+    // previously active version of the same name. Without this RPC the
+    // DRAFT -> TESTING -> ACTIVE -> DEPRECATED lifecycle is unreachable
+    // from outside the service.
+    rpc PromoteTarget(PromoteTargetRequest) returns (ExperimentTarget);
 
     // Datasets
     rpc CreateDataset(CreateDatasetRequest) returns (Dataset);
@@ -110,6 +115,11 @@ message TargetComparisonRow {
 
 message CompareTargetsResponse {
     repeated TargetComparisonRow rows = 1;
+}
+
+message PromoteTargetRequest {
+    string name = 1;
+    int32 version = 2;
 }
 
 // ---------- Datasets ----------

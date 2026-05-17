@@ -81,6 +81,26 @@ class TestAnnotationQueue:
         store.complete_annotation_item(item.item_id)
         assert store.get_next_annotation_item("q", reviewer="alice") is None
 
+    def test_item_locked_to_first_reviewer(self):
+        """Two reviewers asking for the next item should NOT both receive the
+        same item. The first reviewer locks the item; the second moves on to
+        the next pending item (or None if the queue is empty)."""
+        store = InMemoryExperimentStore()
+        store.save_annotation_queue(AnnotationQueue(name="q"))
+        store.add_annotation_item(AnnotationItem(queue_name="q", trace_id="t1"))
+        store.add_annotation_item(AnnotationItem(queue_name="q", trace_id="t2"))
+
+        first = store.get_next_annotation_item("q", reviewer="alice")
+        second = store.get_next_annotation_item("q", reviewer="bob")
+        assert first.trace_id == "t1"
+        assert second.trace_id == "t2"
+        # Items returned are distinct (different reviewers don't collide).
+        assert first.assigned_to == "alice"
+        assert second.assigned_to == "bob"
+
+        third = store.get_next_annotation_item("q", reviewer="carol")
+        assert third is None
+
 
 class TestTargetSummaryUpdate:
     def test_update_target_summary_propagates(self):

@@ -50,6 +50,11 @@ class ExperimentationServiceStub(object):
                 request_serializer=experiments__pb2.CompareTargetsRequest.SerializeToString,
                 response_deserializer=experiments__pb2.CompareTargetsResponse.FromString,
                 _registered_method=True)
+        self.PromoteTarget = channel.unary_unary(
+                '/experiments.ExperimentationService/PromoteTarget',
+                request_serializer=experiments__pb2.PromoteTargetRequest.SerializeToString,
+                response_deserializer=experiments__pb2.ExperimentTarget.FromString,
+                _registered_method=True)
         self.CreateDataset = channel.unary_unary(
                 '/experiments.ExperimentationService/CreateDataset',
                 request_serializer=experiments__pb2.CreateDatasetRequest.SerializeToString,
@@ -151,6 +156,16 @@ class ExperimentationServiceServicer(object):
 
     def CompareTargets(self, request, context):
         """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def PromoteTarget(self, request, context):
+        """PromoteTarget moves a target to ACTIVE and auto-deprecates the
+        previously active version of the same name. Without this RPC the
+        DRAFT -> TESTING -> ACTIVE -> DEPRECATED lifecycle is unreachable
+        from outside the service.
+        """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
@@ -273,6 +288,11 @@ def add_ExperimentationServiceServicer_to_server(servicer, server):
                     servicer.CompareTargets,
                     request_deserializer=experiments__pb2.CompareTargetsRequest.FromString,
                     response_serializer=experiments__pb2.CompareTargetsResponse.SerializeToString,
+            ),
+            'PromoteTarget': grpc.unary_unary_rpc_method_handler(
+                    servicer.PromoteTarget,
+                    request_deserializer=experiments__pb2.PromoteTargetRequest.FromString,
+                    response_serializer=experiments__pb2.ExperimentTarget.SerializeToString,
             ),
             'CreateDataset': grpc.unary_unary_rpc_method_handler(
                     servicer.CreateDataset,
@@ -437,6 +457,33 @@ class ExperimentationService(object):
             '/experiments.ExperimentationService/CompareTargets',
             experiments__pb2.CompareTargetsRequest.SerializeToString,
             experiments__pb2.CompareTargetsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def PromoteTarget(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/experiments.ExperimentationService/PromoteTarget',
+            experiments__pb2.PromoteTargetRequest.SerializeToString,
+            experiments__pb2.ExperimentTarget.FromString,
             options,
             channel_credentials,
             insecure,

@@ -18,6 +18,7 @@ Book: "Designing AI Systems" (https://www.manning.com/books/designing-ai-systems
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import statistics
 import uuid
@@ -140,6 +141,23 @@ class ExperimentationServiceImpl(
             versions=[self._target_to_proto(t) for t in history],
         )
 
+    async def PromoteTarget(self, request, context):
+        """Move a target to ACTIVE; auto-deprecate the previous active version.
+
+        Completes the DRAFT -> TESTING -> ACTIVE -> DEPRECATED lifecycle from
+        Listing 7.15. The store already implements the auto-deprecate semantics
+        in ``update_target_status``; this RPC simply exposes it.
+        """
+        try:
+            target = self.store.update_target_status(request.name, request.version, "ACTIVE")
+        except KeyError:
+            await context.abort(
+                grpc.StatusCode.NOT_FOUND,
+                f"Target '{request.name}:{request.version}' not registered",
+            )
+            return experiments_pb2.ExperimentTarget()
+        return self._target_to_proto(target)
+
     async def CompareTargets(self, request, context):
         rows = []
         for tid in request.target_ids:
@@ -217,6 +235,7 @@ class ExperimentationServiceImpl(
             )
             return
         targets: List[ExperimentTarget] = []
+        prior_statuses: Dict[tuple, str] = {}
         for tid in request.target_ids:
             name, _, version = tid.partition(":")
             try:
@@ -226,6 +245,9 @@ class ExperimentationServiceImpl(
             if target is None:
                 await context.abort(grpc.StatusCode.NOT_FOUND, f"Target '{tid}' not registered")
                 return
+            # Remember the prior status so a pipeline failure rolls each
+            # target back rather than leaving it stuck in TESTING.
+            prior_statuses[(target.name, target.version)] = target.status
             target.status = "TESTING"
             self.store.update_target_status(target.name, target.version, "TESTING")
             targets.append(target)
@@ -248,14 +270,26 @@ class ExperimentationServiceImpl(
             )
 
         last_progress = None
-        for progress in pipeline.run(
-            evaluation_id=evaluation.evaluation_id,
-            dataset=dataset,
-            targets=targets,
-            metrics=list(request.metrics),
-        ):
-            last_progress = progress
-            yield self._progress_to_proto(progress)
+        try:
+            for progress in pipeline.run(
+                evaluation_id=evaluation.evaluation_id,
+                dataset=dataset,
+                targets=targets,
+                metrics=list(request.metrics),
+            ):
+                last_progress = progress
+                yield self._progress_to_proto(progress)
+        except Exception:
+            # Roll each target back to its prior status so a failed run
+            # doesn't leave the lifecycle stuck in TESTING (chapter promise).
+            evaluation.status = "failed"
+            self.store.save_evaluation(evaluation)
+            for (name, version), prior in prior_statuses.items():
+                try:
+                    self.store.update_target_status(name, version, prior)
+                except KeyError:
+                    pass
+            raise
 
         if last_progress and last_progress.results is not None:
             evaluation.status = "completed"
@@ -322,7 +356,8 @@ class ExperimentationServiceImpl(
                 grpc.StatusCode.NOT_FOUND, f"Scoring rule '{request.rule_name}' not found"
             )
             return experiments_pb2.RunScoringRuleResponse()
-        traces = self._fetch_traces(request.trace_ids)
+        sampled_ids = self._sample_trace_ids(list(request.trace_ids), rule.name, rule.sample_rate)
+        traces = self._fetch_traces(sampled_ids)
         traces_scored = 0
         scores_recorded = 0
         for trace in traces:
@@ -342,6 +377,27 @@ class ExperimentationServiceImpl(
             scores_recorded=scores_recorded,
         )
 
+    @staticmethod
+    def _sample_trace_ids(trace_ids: List[str], rule_name: str, sample_rate: float) -> List[str]:
+        """Deterministically pick ~sample_rate fraction of trace_ids.
+
+        Honors Listing 7.18's ``sample_rate`` field (which the previous
+        implementation stored but ignored). Uses a stable hash on
+        (rule_name, trace_id) so the same trace is sampled or skipped
+        consistently across calls — useful for replay and debugging.
+        """
+        if sample_rate >= 1.0:
+            return list(trace_ids)
+        if sample_rate <= 0.0:
+            return []
+        sampled: List[str] = []
+        for tid in trace_ids:
+            digest = hashlib.md5(f"{rule_name}|{tid}".encode("utf-8")).digest()
+            bucket = int.from_bytes(digest[:8], "big", signed=False) / 2**64
+            if bucket < sample_rate:
+                sampled.append(tid)
+        return sampled
+
     # ------------------------------------------------------------------
     # A/B testing
     # ------------------------------------------------------------------
@@ -352,16 +408,18 @@ class ExperimentationServiceImpl(
         return self._experiment_to_proto(exp)
 
     async def AssignVariant(self, request, context):
-        existing = self.store.find_assignment(request.experiment_name, request.assignment_key)
-        if existing is not None:
-            return self._assignment_to_proto(existing)
-
+        # Check experiment existence FIRST so a stale assignment from a
+        # deleted/renamed experiment doesn't keep getting returned.
         experiment = self.store.get_experiment(request.experiment_name)
         if experiment is None:
             return experiments_pb2.VariantAssignment(
                 experiment_name=request.experiment_name,
                 assignment_key=request.assignment_key,
             )
+
+        existing = self.store.find_assignment(request.experiment_name, request.assignment_key)
+        if existing is not None:
+            return self._assignment_to_proto(existing)
 
         variant = assign_variant(experiment, request.assignment_key)
         if variant is None:
@@ -443,25 +501,31 @@ class ExperimentationServiceImpl(
                     for o in per_variant.get(baseline_name, [])
                     if metric in o.outcomes
                 ]
-                best_winner = baseline_name
-                best_diff = 0.0
-                best_p = 1.0
+                # Track the closest challenger (largest diff vs baseline, even
+                # if negative) so we can report a meaningful p-value when
+                # baseline wins — instead of the initial sentinel of 1.0.
+                best_challenger: Optional[tuple] = None
                 for variant_name, variant_outcomes in per_variant.items():
                     if variant_name == baseline_name:
                         continue
                     values = [o.outcomes[metric] for o in variant_outcomes if metric in o.outcomes]
                     _, p_value, diff = welch_t_test(values, baseline_values)
-                    if diff > best_diff:
-                        best_diff = diff
-                        best_winner = variant_name
-                        best_p = p_value
+                    if best_challenger is None or diff > best_challenger[1]:
+                        best_challenger = (variant_name, diff, p_value)
+                if best_challenger is None:
+                    continue
+                challenger_name, challenger_diff, challenger_p = best_challenger
+                if challenger_diff > 0:
+                    winner = challenger_name
+                else:
+                    winner = baseline_name
                 comparisons.append(
                     MetricComparison(
                         metric_name=metric,
-                        winner=best_winner,
-                        effect_size=best_diff,
-                        p_value=best_p,
-                        is_significant=best_p < 0.05,
+                        winner=winner,
+                        effect_size=challenger_diff,
+                        p_value=challenger_p,
+                        is_significant=challenger_p < 0.05,
                     )
                 )
 

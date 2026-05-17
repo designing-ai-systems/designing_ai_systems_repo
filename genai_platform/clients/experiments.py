@@ -72,6 +72,18 @@ class ExperimentsClient(BaseClient):
             metadata=self.metadata,
         )
 
+    def promote_target(self, *, name: str, version: int):
+        """Promote a target to ACTIVE; auto-deprecates the previous version.
+
+        Completes the DRAFT -> TESTING -> ACTIVE -> DEPRECATED lifecycle
+        from Listing 7.15; without this call the lifecycle was unreachable
+        from outside the service.
+        """
+        return self._stub.PromoteTarget(
+            experiments_pb2.PromoteTargetRequest(name=name, version=version),
+            metadata=self.metadata,
+        )
+
     # ------------------------------------------------------------------
     # Datasets — Listing 7.17
     # ------------------------------------------------------------------

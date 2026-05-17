@@ -51,3 +51,34 @@ class TestWelchTTest:
         _, p_value, diff = welch_t_test(a, b)
         assert diff > 0.3
         assert p_value < 0.05
+
+    def test_uses_t_distribution_for_small_samples(self):
+        """A two-sample test on n=2 per arm should yield a p-value around
+        0.10, not below 0.05. The previous normal-CDF approximation reported
+        p ~ 0.005 here, declaring an effect "significant" when the t-test
+        (which accounts for degrees of freedom) does not.
+
+        Reference (scipy.stats.ttest_ind(equal_var=False)):
+            t = -2.828, df = 2.0, two-tailed p ≈ 0.1056
+        """
+        a = [1.0, 1.5]
+        b = [2.0, 2.5]
+        t_stat, p_value, diff = welch_t_test(a, b)
+        assert abs(diff - (-1.0)) < 1e-9
+        assert abs(t_stat + 2.828) < 0.01
+        # Normal-CDF approximation gave p ≈ 0.0047; the real t-test gives 0.106.
+        assert 0.08 <= p_value <= 0.13
+
+    def test_t_distribution_is_more_conservative_than_normal(self):
+        """The t-distribution has heavier tails than the standard normal, so
+        the same t-statistic yields a strictly larger p-value under the
+        t-distribution than under the normal CDF — especially for small n.
+
+        For a small sample where the previous normal-CDF approximation gave
+        p ≈ 0.005 (significant), the proper Welch's test gives p ≈ 0.106
+        (not significant). The fix prevents that false-positive significance.
+        """
+        # n_a = n_b = 2, t = -2.828, df = 2.0
+        _, p_t, _ = welch_t_test([1.0, 1.5], [2.0, 2.5])
+        # Under the t-distribution this p-value lives near 0.106, not below 0.05.
+        assert p_t > 0.05
