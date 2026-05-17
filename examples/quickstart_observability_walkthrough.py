@@ -1,9 +1,19 @@
 """
-Quickstart: a multi-turn Session with full Figure 7.5 trace waterfalls.
+Quickstart: walkthrough of section 7.2.1's worked example — a single
+multi-turn conversation rendered as three full Figure 7.5 traces.
 
-The closest the codebase comes to the chapter's worked example in
-section 7.2.1. Synthesizes three patient-intake turns sharing a single
-session_id, each turn producing a nested trace:
+This is a Chapter 7 (Observability) demo. The word "session" appears
+because the chapter's data model has Session as a **grouping primitive
+above traces** (section 7.2): when a patient asks three questions in a
+row, all three traces share one ``session_id``. This is distinct from
+the Session Service in Chapter 4, which manages session lifecycle —
+this demo only borrows the ``session_id`` for trace grouping.
+
+The companion file ``quickstart_observability.py`` is the headlines
+demo (Listing 7.10 custom span + Listing 7.13 cost drill-down). This
+walkthrough is the deeper tour: three patient-intake turns sharing
+one ``session_id``, each turn producing the nested trace from
+Figure 7.5:
 
     gateway.handle_request
       ├── sessions.get_messages
@@ -17,8 +27,8 @@ session_id, each turn producing a nested trace:
 Plus two quality scores per trace (Listing 7.11): a model-judge
 helpfulness score and a human correctness score.
 
-The example writes the spans / generations / scores directly through
-the SDK; no live model calls, no API keys needed. After it finishes,
+The example writes spans / generations / scores directly through the
+SDK; no live model calls, no API keys needed. After it finishes,
 visit http://localhost:8501 and click through:
 
   - **Sessions**:   one row, 3 turns rolled up
@@ -28,7 +38,7 @@ visit http://localhost:8501 and click through:
   - **Metrics**:    request-duration percentiles over the lookback
   - **Service Health**: span counts per service
 
-Run:  uv run python examples/quickstart_sessions.py
+Run:  uv run python examples/quickstart_observability_walkthrough.py
 """
 
 from __future__ import annotations

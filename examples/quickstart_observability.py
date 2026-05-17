@@ -10,6 +10,9 @@ and Gateway in-process and shows:
   2. Listing 7.13 — query a cost report by team, then drill down into
      models for a specific team.
 
+For a richer demo with the full Figure 7.5 trace waterfall and a
+multi-turn session, see ``quickstart_observability_walkthrough.py``.
+
 Run:  python examples/quickstart_observability.py
 """
 
