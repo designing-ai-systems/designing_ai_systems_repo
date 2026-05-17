@@ -75,6 +75,113 @@ _SERVICE_COLORS: Dict[str, str] = {
 _SERVICE_COLOR_FALLBACK = "#94a3b8"
 
 
+# One-paragraph explainer per page, surfaced behind a collapsible
+# "📖 How to read this page" expander. Keeps the data model from
+# Chapter 7 section 7.2 within reach for a first-time reader without
+# the page feeling busy on rereads.
+_PAGE_GLOSSARY: Dict[str, str] = {
+    "Sessions": (
+        "A **session** is one conversation — multiple back-and-forth turns "
+        "between a user and the assistant. Each row groups every trace "
+        "that shares a `session_id`. Drill into a session to see each "
+        "turn's full waterfall and the quality scores attached to it. "
+        "The Observability Service doesn't manage session lifecycle "
+        "(that's the Session Service from Chapter 4); this page just "
+        "reads the `session_id` field on each Trace."
+    ),
+    "Traces": (
+        "A **trace** is one user request — everything the platform did to "
+        "produce one assistant response. Inside a trace, **spans** are "
+        "units of work in a service (`sessions.get_messages`, "
+        "`data.search`, `guardrails.validate_input`). A **generation** is "
+        "a specialized span for an LLM call — it carries model name, "
+        "token counts, cost, time-to-first-token, and lives in its own "
+        "indexed table. **Scores** attach asynchronously and rate "
+        "quality (helpfulness, correctness, retrieval relevance)."
+    ),
+    "Cost": (
+        "Per-request costs aggregated by dimension. Listing 7.13's "
+        "drill-down: pick a `group_by` (team / workflow / model / "
+        "provider), pick a lookback window, see who spent what. The "
+        "data comes from `Generation.cost_usd` on every LLM call."
+    ),
+    "Metrics": (
+        "Time-series view of any platform metric. **Counters** "
+        "accumulate (total requests, total cost). **Histograms** track "
+        "distributions (latency, where p50 / p95 / p99 actually mean "
+        "something). The chapter recommends histograms over averages "
+        "because AI latency is heavy-tailed — a p50 of 800 ms can hide "
+        "a p99 of 12 s."
+    ),
+    "Service Health": (
+        "Per-service rollups of the spans the Observability Service has "
+        "received recently. Status is derived from span error rates over "
+        "the lookback window: < 10 % errors = healthy, 10–50 % = "
+        "degraded, ≥ 50 % = critical. Empty rows mean no spans in the "
+        "window — that's `unknown`, not healthy."
+    ),
+    "Logs": (
+        "Structured log events emitted from within spans. Each event "
+        "carries a `trace_id` / `span_id` so you can navigate from a "
+        "trace's waterfall straight into its detailed log trail. "
+        "Filter by trace_id, service, event_type, or severity."
+    ),
+}
+
+
+# Rubric / source descriptions used in the trace-detail scores subtable.
+# A score's own `comment` field wins if non-empty; this dict is the
+# fallback when a producer didn't set one.
+_SCORE_DESCRIPTIONS: Dict[str, str] = {
+    "helpfulness": (
+        "0.0–1.0 rating of how directly the assistant's response answers "
+        "the user's question. Typically a MODEL_JUDGE score sampled at "
+        "5–20 % of production traffic."
+    ),
+    "correctness": (
+        "Categorical reviewer label (correct / partially_correct / "
+        "incorrect). Typically a HUMAN score sampled at ~1 % for ground "
+        "truth, used to calibrate automated scorers (Figure 7.8)."
+    ),
+    "retrieval_relevance": (
+        "Quality of the retrieved context. Typically AUTOMATED — pulled "
+        "from the Data Service span's relevance score, no model call "
+        "required."
+    ),
+    "safety_compliance": (
+        "Whether the response adhered to safety policies. Usually "
+        "categorical (pass / fail) sourced from the Guardrails Service."
+    ),
+    "content_accuracy": (
+        "Factual accuracy of the response. Typically a MODEL_JUDGE or "
+        "HUMAN score; expensive to run on all traffic."
+    ),
+}
+
+
+_SOURCE_DESCRIPTIONS: Dict[str, str] = {
+    "AUTOMATED": "Deterministic heuristic. Cheap, fast, scores every trace.",
+    "MODEL_JUDGE": "Another LLM rated this response. Sampled (5–20%).",
+    "HUMAN": "Reviewer manually labeled this. Ground truth, sampled (~1%).",
+    "USER_FEEDBACK": "End-user signal (e.g. thumbs up/down).",
+}
+
+
+def _glossary_expander(page_name: str) -> None:
+    """Render the per-page 'How to read this page' expander."""
+    text = _PAGE_GLOSSARY.get(page_name)
+    if not text:
+        return
+    with st.expander("📖 How to read this page", expanded=False):
+        st.markdown(text)
+
+
+def _source_legend_markdown() -> str:
+    """Tiny markdown block explaining the four score sources."""
+    rows = "  \n".join(f"**{src}** — {desc}" for src, desc in _SOURCE_DESCRIPTIONS.items())
+    return rows
+
+
 # ---------------------------------------------------------------------------
 # Helpers for the trace detail view
 # ---------------------------------------------------------------------------
@@ -177,6 +284,7 @@ def page_traces() -> None:
         "Single requests, span/generation waterfall, and attached scores. "
         "The primary unit of analysis when investigating a problem (Chapter 7, section 7.2)."
     )
+    _glossary_expander("Traces")
 
     platform = get_platform()
     with st.sidebar:
@@ -488,27 +596,38 @@ def _render_trace_detail(trace: Any, *, key_prefix: str) -> None:
     # ------------------------------------------------------------------
     if trace.scores:
         st.markdown("### Scores")
-        st.dataframe(
-            pd.DataFrame(
-                [
-                    {
-                        "name": s.name,
-                        "value": s.value,
-                        "source": s.source,
-                        "span_id": s.span_id,
-                        "generation_id": s.generation_id,
-                        "comment": s.comment,
-                    }
-                    for s in trace.scores
-                ]
-            ),
-            width="stretch",
+        st.caption(
+            "Quality signals attached to this trace. The `description` column "
+            "explains what each score measures: prefer the score's own "
+            "`comment` if set; else fall back to a built-in rubric; else "
+            'show "no description registered".'
         )
+        score_rows = []
+        for s in trace.scores:
+            description = (
+                s.comment
+                or _SCORE_DESCRIPTIONS.get(s.name)
+                or "no description registered — set `comment` on `record_score()`"
+            )
+            score_rows.append(
+                {
+                    "name": s.name,
+                    "value": s.value,
+                    "source": s.source,
+                    "description": description,
+                    "span_id": s.span_id,
+                    "generation_id": s.generation_id,
+                }
+            )
+        st.dataframe(pd.DataFrame(score_rows), width="stretch")
+        with st.expander("ℹ️ What do the source values mean?", expanded=False):
+            st.markdown(_source_legend_markdown())
 
 
 def page_cost() -> None:
     st.title("Cost")
     st.caption("Listing 7.13 — drill into cost by team, workflow, or model.")
+    _glossary_expander("Cost")
 
     platform = get_platform()
     with st.sidebar:
@@ -556,6 +675,7 @@ def page_metrics() -> None:
         "Percentile time series for any platform metric. Section 7.4.2 calls "
         "out histograms over averages because AI latency is heavy-tailed."
     )
+    _glossary_expander("Metrics")
 
     platform = get_platform()
     # Cross-page link from Traces may pre-fill the lookback.
@@ -637,6 +757,7 @@ def page_metrics() -> None:
 def page_service_health() -> None:
     st.title("Service Health")
     st.caption("Span error rates over the lookback window, per platform service.")
+    _glossary_expander("Service Health")
 
     platform = get_platform()
     services = [
@@ -676,6 +797,7 @@ def page_sessions() -> None:
         "from Chapter 4); this page just groups traces by their session_id "
         "field — Chapter 7, section 7.3."
     )
+    _glossary_expander("Sessions")
 
     platform = get_platform()
     with st.sidebar:
@@ -803,6 +925,7 @@ def page_sessions() -> None:
 def page_logs() -> None:
     st.title("Logs")
     st.caption("Structured-log search by trace_id, service, or event_type.")
+    _glossary_expander("Logs")
 
     platform = get_platform()
     # Cross-page link from Traces sets this so the filter pre-fills.
