@@ -24,13 +24,17 @@ Book: "Designing AI Systems" (https://www.manning.com/books/designing-ai-systems
 from __future__ import annotations
 
 import json
+import logging
 import os
+import threading
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Tuple
 
 from genai_platform import GenAIPlatform, workflow
 from services.tools.models import RateLimits, ToolBehavior
+
+logger = logging.getLogger(__name__)
 
 CLAW_NAMESPACE = "claw.*"  # fnmatch pattern used by platform.tools.discover
 CLAW_KNOWLEDGE_INDEX = os.environ.get("CLAW_KNOWLEDGE_INDEX", "company-knowledge")
@@ -206,7 +210,13 @@ def register_claw_assets() -> None:
 # Listing 9.11 / 9.13: a small in-app stand-in for the chapter's
 # `claw-action-limits` policy. The platform's Guardrails Service doesn't
 # expose a runtime policy-registration RPC today; the README documents this.
+#
+# Per-session counters live in a module-level dict guarded by a lock.
+# Lifetime matches the running process (production should back this with
+# session memory so the limit survives container restarts and works across
+# replicas — noted in the chapter-7 discrepancies file).
 _action_counters: Dict[str, int] = {}
+_action_counters_lock = threading.Lock()
 
 
 def _check_tool_arguments(
@@ -227,9 +237,10 @@ def _check_tool_arguments(
 
     if tool_name == "claw.tickets.create":
         key = f"{session_id}:claw.tickets.create"
-        if _action_counters.get(key, 0) >= 10:
-            return False, "maximum 10 ticket creations per session"
-        _action_counters[key] = _action_counters.get(key, 0) + 1
+        with _action_counters_lock:
+            if _action_counters.get(key, 0) >= 10:
+                return False, "maximum 10 ticket creations per session"
+            _action_counters[key] = _action_counters.get(key, 0) + 1
 
     return True, ""
 
@@ -286,6 +297,21 @@ def _trim_history_to_budget(history, max_tokens: int) -> List[Dict[str, Any]]:
     return out
 
 
+def _resolve_system_prompt() -> str:
+    """Fetch the registered system prompt, falling back to the inline default.
+
+    The ``@workflow`` deploy path doesn't call ``register_claw_assets``;
+    when that happens the prompt isn't in the Model Service's registry yet
+    and ``get_prompt`` raises. Falling back here keeps the assistant
+    answering instead of crashing on first request.
+    """
+    try:
+        return platform.models.get_prompt("claw-assistant")["content"]
+    except Exception as exc:  # noqa: BLE001 — broad to cover gRPC + key errors
+        logger.warning("get_prompt('claw-assistant') failed (%s); using inline default", exc)
+        return CLAW_SYSTEM_PROMPT
+
+
 def assemble_context(
     user_id: str,
     session_id: str,
@@ -296,8 +322,8 @@ def assemble_context(
     """Listing 9.15: assemble the full messages list within a token budget."""
     used = 0
 
-    system_prompt = platform.models.get_prompt("claw-assistant")
-    used += _estimate_tokens(system_prompt["content"])
+    system_prompt_text = _resolve_system_prompt()
+    used += _estimate_tokens(system_prompt_text)
 
     used += _estimate_tokens(message)
 
@@ -321,7 +347,7 @@ def assemble_context(
     trimmed_history = _trim_history_to_budget(raw_history, history_budget)
 
     messages = [
-        {"role": "system", "content": system_prompt["content"]},
+        {"role": "system", "content": system_prompt_text},
         {
             "role": "system",
             "content": f"User memory:\n{memory_text}\n\nRetrieved documents:\n{doc_text}",
@@ -417,6 +443,7 @@ def claw_assistant(message: str, user_id: str, session_id: str = "") -> dict:
     model_tools, llm_to_platform = platform.tools.build_model_tools(namespace=CLAW_NAMESPACE)
     final_response: str = ""
     used_knowledge = bool(doc_text)
+    completed_naturally = False
     with platform.observability.trace_operation(
         "claw.agent_loop",
         workflow_id="claw-assistant",
@@ -427,6 +454,7 @@ def claw_assistant(message: str, user_id: str, session_id: str = "") -> dict:
             response = platform.models.chat(model=CLAW_MODEL, messages=messages, tools=model_tools)
             if not response.tool_calls:
                 final_response = response.content or ""
+                completed_naturally = True
                 break
             messages.append(
                 {
@@ -468,8 +496,16 @@ def claw_assistant(message: str, user_id: str, session_id: str = "") -> dict:
                         "content": json.dumps(result, default=str),
                     }
                 )
-        else:
-            final_response = response.content or ""
+
+        if not completed_naturally:
+            # The agent burned through MAX_AGENT_ITERATIONS without producing
+            # a final text answer. Make one more chat call without tools so
+            # the model is forced to summarise instead of returning empty.
+            closer = platform.models.chat(model=CLAW_MODEL, messages=messages)
+            final_response = closer.content or (
+                "I wasn't able to complete that request in the time available. "
+                "Please try rephrasing or breaking it into smaller steps."
+            )
 
         # --- Step 7: per-turn quality scoring (Listing 9.18, simplified). ---
         platform.observability.record_score(
