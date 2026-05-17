@@ -19,13 +19,19 @@ Figure 7.5:
       ├── sessions.get_messages
       ├── data.search
       ├── guardrails.validate_input
-      ├── models.chat
-      │     └── models.generation  (token counts, cost, TTFT)
+      ├── models.generation  (LLM call: token counts, cost, TTFT)
       ├── guardrails.filter_output
       └── sessions.add_messages
 
-Plus two quality scores per trace (Listing 7.11): a model-judge
-helpfulness score and a human correctness score.
+Six spans + one generation per trace. Per Listing 7.7, the Model
+Service's Chat call IS the generation — no wrapping ``models.chat``
+span.
+
+Three quality scores per trace (Listing 7.11) cover all the source
+types from Figure 7.8: ``helpfulness`` from a MODEL_JUDGE,
+``correctness`` from a HUMAN reviewer, and ``retrieval_relevance``
+from an AUTOMATED heuristic. Each carries a ``comment`` describing
+its rubric and any relevant metadata (judge model, reviewer email).
 
 The example writes spans / generations / scores directly through the
 SDK; no live model calls, no API keys needed. After it finishes,
@@ -105,8 +111,13 @@ def synthesize_turn(
     user_input: str,
     assistant_output: str,
 ) -> None:
-    """Write one full trace — seven spans (incl. a nested generation)
-    plus two scores — for a single turn in the session."""
+    """Write one full trace — six spans + one generation, plus three scores
+    — for a single turn in the session.
+
+    The Model Service produces ONE generation per Chat call (Listing 7.7),
+    so the LLM step is recorded as a generation directly under the gateway
+    root, not as a `models.chat` span containing a child generation.
+    """
     # Common attributes that get lifted onto the Trace at assembly time.
     base_attrs = {
         "session_id": session_id,
@@ -171,33 +182,20 @@ def synthesize_turn(
         {"policies": "no_medical_advice,pii_detection", "result": "passed"},
     )
 
-    # models.chat as a parent span; the generation nests under it.
-    chat_id = uuid.uuid4().hex
+    # models.generation — the chapter's "where most cost + latency lives."
+    # No wrapping `models.chat` span: Listing 7.7 has the Model Service use
+    # `trace_generation` directly, so the Chat call IS the generation.
     chat_start = cursor
     chat_duration_ms = 1100.0
-    platform.observability.record_span(
-        _span(
-            trace_id,
-            chat_id,
-            service="models",
-            operation="models.chat",
-            start=chat_start,
-            duration_ms=chat_duration_ms,
-            parent_span_id=root_id,
-            attributes={**base_attrs, "requested_model": "gpt-4o"},
-        )
-    )
-
-    # The Generation — the chapter's "where most cost + latency lives."
     gen_span = _span(
         trace_id,
         uuid.uuid4().hex,
         service="models",
         operation="models.generation",
-        start=chat_start + timedelta(milliseconds=30),  # provider call after model selection
-        duration_ms=chat_duration_ms - 60,
-        parent_span_id=chat_id,
-        attributes=base_attrs,
+        start=chat_start,
+        duration_ms=chat_duration_ms,
+        parent_span_id=root_id,
+        attributes={**base_attrs, "requested_model": "gpt-4o"},
     )
     platform.observability.record_generation(
         Generation(
@@ -228,23 +226,49 @@ def synthesize_turn(
         {"messages_added": "2"},
     )
 
-    # Two quality scores (Listing 7.11). Attached *after* the response —
-    # in production they'd flow in asynchronously through a scoring rule.
+    # Three quality scores (Listing 7.11) covering all the source types
+    # the chapter calls out. Attached *after* the response — in production
+    # they'd flow in asynchronously through a scoring rule (Listing 7.18).
     platform.observability.record_score(
         trace_id=trace_id,
         name="helpfulness",
         value=0.85 + 0.03 * turn_index,
         source="MODEL_JUDGE",
-        comment="claude-3.5 judge",
-        metadata={"judge_model": "claude-haiku-4-5"},
+        comment=(
+            "0.0–1.0 score from claude-haiku-4-5 rating how directly the "
+            "assistant's response answers the user's question. Sampled at "
+            "10% of production traffic via an online scoring rule."
+        ),
+        metadata={
+            "judge_model": "claude-haiku-4-5",
+            "rubric": "helpfulness",
+        },
     )
     platform.observability.record_score(
         trace_id=trace_id,
         name="correctness",
         value="correct",
         source="HUMAN",
-        comment="reviewer agreed with assistant response",
-        metadata={"reviewer": "sarah@healthfirst.com"},
+        comment=(
+            "Reviewer label: correct / partially_correct / incorrect. "
+            "Sampled at ~1% for ground-truth calibration of automated and "
+            "model-judge scorers (chapter 7, Figure 7.8)."
+        ),
+        metadata={
+            "reviewer": "sarah@healthfirst.com",
+            "rubric": "correctness",
+        },
+    )
+    platform.observability.record_score(
+        trace_id=trace_id,
+        name="retrieval_relevance",
+        value=0.82,
+        source="AUTOMATED",
+        comment=(
+            "Top relevance score across documents returned by data.search "
+            "on this trace. Pulled from the data.search span's "
+            "`top_relevance_score` attribute — no model call required."
+        ),
     )
 
 
