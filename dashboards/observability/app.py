@@ -223,6 +223,17 @@ def page_traces() -> None:
         st.warning(f"Trace {trace_id} not found")
         return
 
+    _render_trace_detail(trace, key_prefix=f"t-{trace.trace_id}")
+
+
+def _render_trace_detail(trace: Any, *, key_prefix: str) -> None:
+    """Render the full detail view for one trace.
+
+    Used by both ``page_traces`` (single-trace drill-down) and
+    ``page_sessions`` (one per turn in the session drill-down). The
+    ``key_prefix`` keeps Streamlit widget keys unique when the helper
+    runs multiple times on a single page.
+    """
     # ------------------------------------------------------------------
     # 1) Summary row
     # ------------------------------------------------------------------
@@ -242,10 +253,10 @@ def page_traces() -> None:
     # 2) Cross-page jump buttons (Figure 7.7: trace → logs → metrics)
     # ------------------------------------------------------------------
     jump_cols = st.columns(2)
-    if jump_cols[0].button("📝 View logs for this trace", key=f"logs-{trace.trace_id}"):
+    if jump_cols[0].button("📝 View logs for this trace", key=f"{key_prefix}-logs"):
         st.session_state["_logs_trace_id_filter"] = trace.trace_id
         st.switch_page("Logs")
-    if jump_cols[1].button("📈 Metrics around this window", key=f"metrics-{trace.trace_id}"):
+    if jump_cols[1].button("📈 Metrics around this window", key=f"{key_prefix}-metrics"):
         spans_start = [s.start_time for s in trace.spans if s.start_time]
         spans_end = [s.end_time for s in trace.spans if s.end_time]
         if spans_start and spans_end:
@@ -311,15 +322,11 @@ def page_traces() -> None:
             y="Step",
             color="Kind",
             hover_data=["Service", "Duration (ms)", "Status"],
-            color_discrete_map={
-                "span": "#5470c6",
-                # Generation rows get a distinct, warmer colour so they
-                # stand out as the chapter's "where most cost + latency lives."
-            },
+            color_discrete_map={"span": "#5470c6"},
         )
         fig.update_yaxes(autorange="reversed", title=None)
         fig.update_layout(height=max(160, 32 * len(df_w) + 80), margin=dict(l=10, r=10, t=20, b=10))
-        st.plotly_chart(fig, width="stretch")
+        st.plotly_chart(fig, width="stretch", key=f"{key_prefix}-waterfall")
     else:
         st.info("No spans recorded on this trace.")
 
@@ -630,10 +637,15 @@ def page_sessions() -> None:
         key=lambda t: min((s.start_time for s in t.spans if s.start_time), default=far_future),
     )
 
-    detail_rows = []
+    # Summary table of all traces in the session.
+    st.caption(
+        "Each row is one trace — a single user-assistant turn in this "
+        "conversation. Expand a turn below to see its full waterfall."
+    )
+    summary_rows = []
     for i, trace in enumerate(session_traces, start=1):
         span_starts = [s.start_time for s in trace.spans if s.start_time]
-        detail_rows.append(
+        summary_rows.append(
             {
                 "turn": i,
                 "trace_id": trace.trace_id,
@@ -646,7 +658,20 @@ def page_sessions() -> None:
                 "scores": ", ".join(f"{s.name}={s.value}" for s in trace.scores),
             }
         )
-    st.dataframe(pd.DataFrame(detail_rows), width="stretch")
+    st.dataframe(pd.DataFrame(summary_rows), width="stretch")
+
+    # Per-turn waterfall — one expander per trace. First one open by default
+    # so the dashboard immediately surfaces the conversation's first turn.
+    st.markdown("---")
+    st.markdown("### Per-turn detail")
+    for i, trace in enumerate(session_traces, start=1):
+        short_id = trace.trace_id[:8]
+        header = (
+            f"Turn {i} — {short_id} — "
+            f"{trace.total_duration_ms:,.0f} ms — ${trace.total_cost_usd:,.4f}"
+        )
+        with st.expander(header, expanded=(i == 1)):
+            _render_trace_detail(trace, key_prefix=f"s-{chosen}-{trace.trace_id}")
 
 
 def page_logs() -> None:
