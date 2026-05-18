@@ -125,9 +125,35 @@ def synthesize_turn(
         "user_id": USER_ID,
     }
 
+    # Per-step durations scale with turn_index so each turn looks
+    # distinguishable on the dashboard. The story this tells: as the
+    # conversation grows, session history retrieval slows (more turns to
+    # load), the prompt gets bigger so the generation runs longer, and
+    # data.search drifts a bit between calls. Guardrail + session-write
+    # spans stay constant — they don't see the growing context.
+    growth = turn_index - 1  # 0 for turn 1, 1 for turn 2, 2 for turn 3...
+    sessions_get_ms = 45.0 + 20.0 * growth
+    data_search_ms = 120.0 + (5.0 if growth % 2 == 0 else -10.0) * growth
+    guardrails_in_ms = 35.0
+    chat_duration_ms = 1100.0 + 150.0 * growth  # bigger prompt → slower
+    ttft_ms = 340.0 + 30.0 * growth
+    guardrails_out_ms = 30.0
+    sessions_add_ms = 80.0
+    # Gateway overhead beyond the sum of its children (network hops,
+    # routing, response serialisation). Small constant.
+    gateway_overhead_ms = 70.0
+    total_duration_ms = (
+        sessions_get_ms
+        + data_search_ms
+        + guardrails_in_ms
+        + chat_duration_ms
+        + guardrails_out_ms
+        + sessions_add_ms
+        + gateway_overhead_ms
+    )
+
     # Root span: gateway.handle_request (the trace root).
     root_id = uuid.uuid4().hex
-    duration_total_ms = 1500.0
     platform.observability.record_span(
         _span(
             trace_id,
@@ -135,7 +161,7 @@ def synthesize_turn(
             service="gateway",
             operation="gateway.handle_request",
             start=started_at,
-            duration_ms=duration_total_ms,
+            duration_ms=total_duration_ms,
             attributes={
                 **base_attrs,
                 "input": user_input,
@@ -164,11 +190,16 @@ def synthesize_turn(
         )
         cursor += timedelta(milliseconds=duration_ms)
 
-    step("sessions", "sessions.get_messages", 45.0, {"messages_retrieved": str(turn_index * 2)})
+    step(
+        "sessions",
+        "sessions.get_messages",
+        sessions_get_ms,
+        {"messages_retrieved": str(turn_index * 2)},
+    )
     step(
         "data",
         "data.search",
-        120.0,
+        data_search_ms,
         {
             "index_name": "patient_procedures",
             "num_results": "4",
@@ -178,7 +209,7 @@ def synthesize_turn(
     step(
         "guardrails",
         "guardrails.validate_input",
-        35.0,
+        guardrails_in_ms,
         {"policies": "no_medical_advice,pii_detection", "result": "passed"},
     )
 
@@ -186,7 +217,6 @@ def synthesize_turn(
     # No wrapping `models.chat` span: Listing 7.7 has the Model Service use
     # `trace_generation` directly, so the Chat call IS the generation.
     chat_start = cursor
-    chat_duration_ms = 1100.0
     gen_span = _span(
         trace_id,
         uuid.uuid4().hex,
@@ -208,7 +238,7 @@ def synthesize_turn(
             cost_usd=0.018 + turn_index * 0.002,
             cache_hit=False,
             fallback_used=False,
-            time_to_first_token_ms=340.0,
+            time_to_first_token_ms=ttft_ms,
         )
     )
     cursor = chat_start + timedelta(milliseconds=chat_duration_ms)
@@ -216,13 +246,13 @@ def synthesize_turn(
     step(
         "guardrails",
         "guardrails.filter_output",
-        30.0,
+        guardrails_out_ms,
         {"policies": "pii_redaction", "result": "passed"},
     )
     step(
         "sessions",
         "sessions.add_messages",
-        80.0,
+        sessions_add_ms,
         {"messages_added": "2"},
     )
 

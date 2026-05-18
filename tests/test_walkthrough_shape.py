@@ -185,6 +185,30 @@ class TestWalkthroughTrace:
         rec_b = _run_one_turn(turn_index=3)
         assert rec_b.generations[0].cost_usd > rec_a.generations[0].cost_usd
 
+    def test_per_turn_total_duration_grows_with_turn_index(self):
+        """As a conversation grows, real services slow down: bigger
+        session history takes longer to fetch, prompts grow, generations
+        run longer. The walkthrough should reflect that so a reader
+        scanning the Sessions page sees three distinguishable rows
+        instead of three identical 1500ms entries."""
+        rec_a = _run_one_turn(turn_index=1)
+        rec_c = _run_one_turn(turn_index=3)
+        root_a = next(s for s in rec_a.spans if s.operation == "gateway.handle_request")
+        root_c = next(s for s in rec_c.spans if s.operation == "gateway.handle_request")
+        assert root_c.duration_ms > root_a.duration_ms + 100, (
+            f"turn 3 should take noticeably longer than turn 1; got "
+            f"turn 1 = {root_a.duration_ms} ms, turn 3 = {root_c.duration_ms} ms"
+        )
+
+    def test_per_turn_generation_duration_grows_with_turn_index(self):
+        """The generation step in particular should slow down across turns
+        — larger prompts take longer to process. Otherwise the latency
+        story the chapter tells (latency tracks context growth) doesn't
+        show up in the demo data."""
+        rec_a = _run_one_turn(turn_index=1)
+        rec_c = _run_one_turn(turn_index=3)
+        assert rec_c.generations[0].span.duration_ms > rec_a.generations[0].span.duration_ms
+
 
 class TestWalkthroughParenting:
     def test_every_child_span_parents_to_a_real_span(self):
