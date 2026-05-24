@@ -31,6 +31,7 @@ class _RecordingObservability:
         self.spans: List[Any] = []
         self.generations: List[Any] = []
         self.scores: List[Dict[str, Any]] = []
+        self.logs: List[Dict[str, Any]] = []
         self.flushes = 0
 
     def record_span(self, span) -> None:
@@ -42,6 +43,9 @@ class _RecordingObservability:
     def record_score(self, **kwargs) -> str:
         self.scores.append(kwargs)
         return uuid.uuid4().hex
+
+    def log(self, **kwargs) -> None:
+        self.logs.append(kwargs)
 
     def flush(self) -> None:
         self.flushes += 1
@@ -208,6 +212,44 @@ class TestWalkthroughTrace:
         rec_a = _run_one_turn(turn_index=1)
         rec_c = _run_one_turn(turn_index=3)
         assert rec_c.generations[0].span.duration_ms > rec_a.generations[0].span.duration_ms
+
+
+class TestWalkthroughLogs:
+    def test_each_turn_emits_log_events_tied_to_the_trace(self):
+        """Listing 7.2 / 7.3 / section 7.4.1: structured logs are how
+        services record detailed events that go beyond a span's attributes.
+        Without any logs the Logs page filtered by trace_id returns
+        nothing, which makes the chapter's trace → logs workflow
+        (Figure 7.7) impossible to demonstrate."""
+        rec = _run_one_turn()
+        assert rec.logs, "walkthrough emits no log events; trace → logs flow is broken"
+        # Every log must carry the trace_id so the dashboard's filter works.
+        for entry in rec.logs:
+            assert entry.get("trace_id") == "trace-test", (
+                f"log {entry.get('event_type')!r} missing/wrong trace_id: {entry.get('trace_id')!r}"
+            )
+
+    def test_log_severities_cover_at_least_info(self):
+        rec = _run_one_turn()
+        severities = {entry.get("severity") for entry in rec.logs}
+        assert "INFO" in severities, "expected at least one INFO log per turn"
+
+    def test_logs_reference_real_event_types(self):
+        rec = _run_one_turn()
+        # The chapter calls out event_type as the field readers filter on.
+        # Each log must have a non-empty event_type so the Logs page's
+        # filter-by-event-type works.
+        for entry in rec.logs:
+            assert entry.get("event_type"), f"log entry missing event_type: {entry}"
+
+    def test_turn_two_demonstrates_a_warning_log(self):
+        """Listing 7.3 specifically shows a provider-fallback WARNING log.
+        Including it in one of the turns lets a reader filter by
+        severity=WARNING on the Logs page and see exactly the example
+        from the book."""
+        rec = _run_one_turn(turn_index=2)
+        warning_logs = [e for e in rec.logs if e.get("severity") == "WARNING"]
+        assert warning_logs, "turn 2 should emit at least one WARNING log (Listing 7.3 fallback)"
 
 
 class TestWalkthroughParenting:

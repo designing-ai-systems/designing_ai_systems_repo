@@ -174,12 +174,14 @@ def synthesize_turn(
     # Child spans nested under the root, sequenced realistically.
     cursor = started_at + timedelta(milliseconds=20)  # 20ms before first child
 
-    def step(service: str, operation: str, duration_ms: float, extra: dict | None = None) -> None:
+    def step(service: str, operation: str, duration_ms: float, extra: dict | None = None) -> str:
+        """Write a span; return its span_id so logs can correlate to it."""
         nonlocal cursor
+        span_id = uuid.uuid4().hex
         platform.observability.record_span(
             _span(
                 trace_id,
-                uuid.uuid4().hex,
+                span_id,
                 service=service,
                 operation=operation,
                 start=cursor,
@@ -189,6 +191,7 @@ def synthesize_turn(
             )
         )
         cursor += timedelta(milliseconds=duration_ms)
+        return span_id
 
     step(
         "sessions",
@@ -196,7 +199,7 @@ def synthesize_turn(
         sessions_get_ms,
         {"messages_retrieved": str(turn_index * 2)},
     )
-    step(
+    data_span_id = step(
         "data",
         "data.search",
         data_search_ms,
@@ -206,11 +209,48 @@ def synthesize_turn(
             "top_relevance_score": "0.82",
         },
     )
-    step(
+    # Listing 7.2: structured log event tied to the retrieval span. A
+    # reader filtering the Logs page by trace_id sees the search detail
+    # without rerunning the workflow.
+    platform.observability.log(
+        event_type="retrieval",
+        severity="INFO",
+        message=(
+            "Retrieved 4 documents from patient_procedures "
+            f"(top relevance 0.82, query turn {turn_index})"
+        ),
+        trace_id=trace_id,
+        span_id=data_span_id,
+        attributes={
+            "index_name": "patient_procedures",
+            "num_results": "4",
+            "top_relevance_score": "0.82",
+        },
+        workflow_id=WORKFLOW_ID,
+        user_id=USER_ID,
+    )
+
+    guardrails_in_span_id = step(
         "guardrails",
         "guardrails.validate_input",
         guardrails_in_ms,
         {"policies": "no_medical_advice,pii_detection", "result": "passed"},
+    )
+    # Section 7.4.1 example: guardrail evaluation logs that record which
+    # rules fired and at what confidence.
+    platform.observability.log(
+        event_type="guardrail_evaluation",
+        severity="INFO",
+        message="Input passed 2 guardrail policies",
+        trace_id=trace_id,
+        span_id=guardrails_in_span_id,
+        attributes={
+            "policies": "no_medical_advice,pii_detection",
+            "rules_evaluated": "2",
+            "result": "passed",
+        },
+        workflow_id=WORKFLOW_ID,
+        user_id=USER_ID,
     )
 
     # models.generation — the chapter's "where most cost + latency lives."
@@ -242,6 +282,47 @@ def synthesize_turn(
         )
     )
     cursor = chat_start + timedelta(milliseconds=chat_duration_ms)
+
+    # INFO log noting the model completed. In production this is what
+    # operations teams scan when investigating latency or cost spikes.
+    platform.observability.log(
+        event_type="model_request",
+        severity="INFO",
+        message=(
+            f"gpt-4o completed in {chat_duration_ms:.0f}ms "
+            f"({3100 + turn_index * 200}p / {180 + turn_index * 20}c tokens)"
+        ),
+        trace_id=trace_id,
+        span_id=gen_span.span_id,
+        attributes={
+            "model": "gpt-4o",
+            "provider": "openai",
+            "prompt_tokens": str(3100 + turn_index * 200),
+            "completion_tokens": str(180 + turn_index * 20),
+        },
+        workflow_id=WORKFLOW_ID,
+        user_id=USER_ID,
+    )
+
+    # Turn 2 demonstrates the Listing 7.3 example end to end: a fallback
+    # WARNING when the primary provider timed out. A reader filtering
+    # the Logs page by severity=WARNING then sees exactly the structured
+    # event the book uses to teach `log_fallback_triggered`.
+    if turn_index == 2:
+        platform.observability.log(
+            event_type="model_fallback",
+            severity="WARNING",
+            message="Fallback: openai -> anthropic",
+            trace_id=trace_id,
+            span_id=gen_span.span_id,
+            attributes={
+                "original_provider": "openai",
+                "fallback_provider": "anthropic",
+                "error_type": "TimeoutError",
+            },
+            workflow_id=WORKFLOW_ID,
+            user_id=USER_ID,
+        )
 
     step(
         "guardrails",
