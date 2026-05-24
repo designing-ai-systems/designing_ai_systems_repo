@@ -71,6 +71,12 @@ class PostgresExperimentStore(ExperimentStore):
             connection_string,
             cursor_factory=psycopg2.extras.RealDictCursor,
         )
+        # Autocommit so reads release their locks immediately instead of
+        # holding "idle in transaction" connections that block writes /
+        # TRUNCATEs. Explicit ``self.conn.commit()`` calls below become
+        # no-ops but stay for documentation. See the matching comment in
+        # services/observability/postgres_store.py.
+        self.conn.autocommit = True
         self._create_tables()
 
     def _create_tables(self) -> None:

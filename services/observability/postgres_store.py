@@ -82,6 +82,15 @@ class PostgresObservabilityStore(ObservabilityStore):
             connection_string,
             cursor_factory=psycopg2.extras.RealDictCursor,
         )
+        # Autocommit so every statement is its own transaction. Without
+        # this, read-only queries (query_traces, get_trace, query_logs,
+        # query_metrics, …) leave the connection "idle in transaction"
+        # holding row locks. Subsequent attempts to TRUNCATE or run any
+        # other AccessExclusiveLock-requiring statement then block for
+        # the lifetime of the next write — which can be forever in a
+        # quiet system. Explicit ``self.conn.commit()`` calls below are
+        # now no-ops but harmless.
+        self.conn.autocommit = True
         self._create_tables()
 
     def _create_tables(self) -> None:

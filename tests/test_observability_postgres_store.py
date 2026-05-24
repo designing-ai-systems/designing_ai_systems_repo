@@ -142,3 +142,35 @@ class TestPostgresObservabilityStore:
         results = store.query_scores(trace_id="t-score")
         assert len(results) == 1
         assert results[0].value == pytest.approx(0.82)
+
+    def test_reads_do_not_leave_connection_idle_in_transaction(self, store):
+        """Regression: the store used to leave reads in an open
+        transaction (psycopg2 starts an implicit one with autocommit off).
+        That meant subsequent writes — including TRUNCATE — blocked on
+        a row-level lock indefinitely. autocommit=True fixes it; this
+        test gates the fix.
+
+        Strategy: do a read through the store's connection, then open a
+        *second* connection and try to acquire AccessExclusiveLock on
+        ``spans`` with a short statement timeout. With the bug present
+        the LOCK statement would block waiting on the read's idle
+        transaction and trip the timeout. With the fix it returns
+        immediately.
+        """
+        # Trigger a read that would (under the old code) leave an
+        # idle-in-transaction connection holding locks.
+        store.query_traces(limit=5)
+
+        dsn = os.environ["OBSERVABILITY_POSTGRES_DSN"]
+        probe = psycopg2.connect(dsn)
+        probe.autocommit = True
+        try:
+            with probe.cursor() as cur:
+                # 2-second statement timeout — well above the few-ms a
+                # clean lock acquisition takes, well under "forever".
+                cur.execute("SET LOCAL statement_timeout = '2s'")
+                cur.execute("BEGIN")
+                cur.execute("LOCK TABLE spans IN ACCESS EXCLUSIVE MODE")
+                cur.execute("ROLLBACK")
+        finally:
+            probe.close()
