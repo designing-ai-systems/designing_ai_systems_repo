@@ -32,6 +32,8 @@ class _RecordingObservability:
         self.generations: List[Any] = []
         self.scores: List[Dict[str, Any]] = []
         self.logs: List[Dict[str, Any]] = []
+        self.counters: List[Dict[str, Any]] = []
+        self.histograms: List[Dict[str, Any]] = []
         self.flushes = 0
 
     def record_span(self, span) -> None:
@@ -46,6 +48,12 @@ class _RecordingObservability:
 
     def log(self, **kwargs) -> None:
         self.logs.append(kwargs)
+
+    def record_counter(self, name, value=1.0, labels=None) -> None:
+        self.counters.append({"name": name, "value": value, "labels": dict(labels or {})})
+
+    def record_histogram(self, name, value, labels=None) -> None:
+        self.histograms.append({"name": name, "value": value, "labels": dict(labels or {})})
 
     def flush(self) -> None:
         self.flushes += 1
@@ -250,6 +258,74 @@ class TestWalkthroughLogs:
         rec = _run_one_turn(turn_index=2)
         warning_logs = [e for e in rec.logs if e.get("severity") == "WARNING"]
         assert warning_logs, "turn 2 should emit at least one WARNING log (Listing 7.3 fallback)"
+
+
+class TestWalkthroughMetrics:
+    def test_each_turn_emits_listing_7_8_counters_and_histograms(self):
+        """Listing 7.8's headline metrics — request total, latency histogram,
+        and cost counter — must land per turn or the Metrics page has no
+        time series to plot."""
+        rec = _run_one_turn()
+        counter_names = {c["name"] for c in rec.counters}
+        histogram_names = {h["name"] for h in rec.histograms}
+        assert "ai.platform.models.requests_total" in counter_names
+        assert "ai.platform.models.cost_usd" in counter_names
+        assert "ai.platform.models.request_duration_ms" in histogram_names
+
+    def test_data_service_metrics_emitted(self):
+        """Listing 7.4 calls out data.search_duration_ms and data.relevance_score
+        as Data Service histograms. Without them the Metrics page can't show
+        the retrieval-side latency or relevance distribution."""
+        rec = _run_one_turn()
+        histogram_names = {h["name"] for h in rec.histograms}
+        assert "ai.platform.data.search_duration_ms" in histogram_names
+        assert "ai.platform.data.relevance_score" in histogram_names
+
+    def test_guardrails_latency_emitted(self):
+        rec = _run_one_turn()
+        histogram_names = {h["name"] for h in rec.histograms}
+        assert "ai.platform.guardrails.evaluation_duration_ms" in histogram_names
+
+    def test_metric_labels_carry_dimensions_for_filtering(self):
+        """The chapter (section 7.4.2) is explicit: metrics must carry
+        dimensional labels (provider / model / workflow_id) so a query
+        like 'p95 latency for gpt-4o in patient-intake' can resolve.
+        Every model metric should have these labels."""
+        rec = _run_one_turn()
+        model_metrics = [
+            m for m in rec.counters + rec.histograms if m["name"].startswith("ai.platform.models.")
+        ]
+        assert model_metrics, "no model-service metrics emitted"
+        for m in model_metrics:
+            labels = m["labels"]
+            for required in ("provider", "model", "workflow_id"):
+                assert required in labels, f"metric {m['name']} missing label {required}"
+
+    def test_request_duration_histogram_reflects_chat_duration(self):
+        """The sample submitted to the latency histogram should equal the
+        chat duration. If someone hard-codes 0.0 here (the bug from
+        commit 1 of the chapter-7 follow-up), this catches it."""
+        rec = _run_one_turn(turn_index=2)
+        samples = [
+            h["value"]
+            for h in rec.histograms
+            if h["name"] == "ai.platform.models.request_duration_ms"
+        ]
+        assert samples, "no MODEL_REQUEST_DURATION samples"
+        # Turn 2 generation runs ~1250ms; the metric should match that.
+        assert samples[0] > 1000, f"unrealistic latency sample: {samples[0]}"
+
+    def test_fallback_counter_only_fires_on_turn_two(self):
+        """The fallback log appears only on turn 2 (Listing 7.3 example).
+        The matching fallback counter should mirror that — incrementing
+        once on turn 2 and zero times on turns 1 and 3."""
+
+        def count_in(rec):
+            return sum(1 for c in rec.counters if c["name"] == "ai.platform.models.fallbacks_total")
+
+        assert count_in(_run_one_turn(turn_index=1)) == 0
+        assert count_in(_run_one_turn(turn_index=2)) == 1
+        assert count_in(_run_one_turn(turn_index=3)) == 0
 
 
 class TestWalkthroughParenting:

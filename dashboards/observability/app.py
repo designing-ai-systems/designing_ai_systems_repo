@@ -114,11 +114,13 @@ _PAGE_GLOSSARY: Dict[str, str] = {
         "a p99 of 12 s."
     ),
     "Service Health": (
-        "Per-service rollups of the spans the Observability Service has "
-        "received recently. Status is derived from span error rates over "
-        "the lookback window: < 10 % errors = healthy, 10–50 % = "
-        "degraded, ≥ 50 % = critical. Empty rows mean no spans in the "
-        "window — that's `unknown`, not healthy."
+        "**Telemetry-derived health, not a liveness probe.** Section 7.3 "
+        "is explicit about the distinction: every platform service still "
+        "has its own liveness endpoint that load balancers use; this "
+        "page reads spans the Observability Service has already received "
+        "and reports a derived status per service. < 10 % error rate "
+        "= **healthy**, 10–50 % = **degraded**, ≥ 50 % = **critical**, "
+        "no spans in the window = **unknown** (not the same as healthy)."
     ),
     "Logs": (
         "Structured log events emitted from within spans. Each event "
@@ -694,6 +696,17 @@ def page_metrics() -> None:
     # Cross-page link from Traces may pre-fill the lookback.
     default_hours = int(st.session_state.pop("_metrics_hours_back", 24) or 24)
     with st.sidebar:
+        st.markdown("**Common metric names** (Listing 7.4):")
+        st.code(
+            "ai.platform.models.request_duration_ms\n"
+            "ai.platform.models.requests_total\n"
+            "ai.platform.models.cost_usd\n"
+            "ai.platform.models.fallbacks_total\n"
+            "ai.platform.data.search_duration_ms\n"
+            "ai.platform.data.relevance_score\n"
+            "ai.platform.guardrails.evaluation_duration_ms",
+            language=None,
+        )
         metric_name = st.text_input("Metric name", value="ai.platform.models.request_duration_ms")
         hours_back = st.slider("Lookback (hours)", min_value=1, max_value=168, value=default_hours)
         buckets = st.slider("Buckets", min_value=6, max_value=96, value=24)
@@ -769,7 +782,11 @@ def page_metrics() -> None:
 
 def page_service_health() -> None:
     st.title("Service Health")
-    st.caption("Span error rates over the lookback window, per platform service.")
+    st.caption(
+        "Derived from span error rates the Observability Service has "
+        "observed — not a liveness probe. A service with no spans in "
+        "the window shows up as `unknown`, not `healthy`."
+    )
     _glossary_expander("Service Health")
 
     platform = get_platform()

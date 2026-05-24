@@ -209,6 +209,17 @@ def synthesize_turn(
             "top_relevance_score": "0.82",
         },
     )
+    # Listing 7.4: Data Service emits two histograms per search.
+    platform.observability.record_histogram(
+        "ai.platform.data.search_duration_ms",
+        data_search_ms,
+        labels={"index_name": "patient_procedures", "workflow_id": WORKFLOW_ID},
+    )
+    platform.observability.record_histogram(
+        "ai.platform.data.relevance_score",
+        0.82,
+        labels={"index_name": "patient_procedures", "workflow_id": WORKFLOW_ID},
+    )
     # Listing 7.2: structured log event tied to the retrieval span. A
     # reader filtering the Logs page by trace_id sees the search detail
     # without rerunning the workflow.
@@ -235,6 +246,13 @@ def synthesize_turn(
         "guardrails.validate_input",
         guardrails_in_ms,
         {"policies": "no_medical_advice,pii_detection", "result": "passed"},
+    )
+    # Listing 7.4: Guardrails Service emits an evaluation-duration
+    # histogram on every policy check.
+    platform.observability.record_histogram(
+        "ai.platform.guardrails.evaluation_duration_ms",
+        guardrails_in_ms,
+        labels={"workflow_id": WORKFLOW_ID, "phase": "validate_input"},
     )
     # Section 7.4.1 example: guardrail evaluation logs that record which
     # rules fired and at what confidence.
@@ -283,6 +301,38 @@ def synthesize_turn(
     )
     cursor = chat_start + timedelta(milliseconds=chat_duration_ms)
 
+    # Listing 7.8: the Model Service's metrics publisher emits four
+    # metrics on every Chat call — one counter for the request itself,
+    # a histogram for latency, a counter for cost in USD, and counters
+    # for prompt + completion tokens. Every metric carries the same
+    # label set so dashboards can slice along provider / model /
+    # workflow_id.
+    model_labels = {
+        "provider": "openai",
+        "model": "gpt-4o",
+        "workflow_id": WORKFLOW_ID,
+        "cache_hit": "False",
+    }
+    platform.observability.record_counter(
+        "ai.platform.models.requests_total", 1.0, labels=model_labels
+    )
+    platform.observability.record_histogram(
+        "ai.platform.models.request_duration_ms", chat_duration_ms, labels=model_labels
+    )
+    platform.observability.record_counter(
+        "ai.platform.models.cost_usd", 0.018 + turn_index * 0.002, labels=model_labels
+    )
+    platform.observability.record_counter(
+        "ai.platform.models.tokens.prompt",
+        float(3100 + turn_index * 200),
+        labels=model_labels,
+    )
+    platform.observability.record_counter(
+        "ai.platform.models.tokens.completion",
+        float(180 + turn_index * 20),
+        labels=model_labels,
+    )
+
     # INFO log noting the model completed. In production this is what
     # operations teams scan when investigating latency or cost spikes.
     platform.observability.log(
@@ -323,12 +373,23 @@ def synthesize_turn(
             workflow_id=WORKFLOW_ID,
             user_id=USER_ID,
         )
+        # The fallback counter mirrors the WARNING log so dashboards
+        # can show "fallback rate" trending up regardless of whether a
+        # reader filters by metric name or by log severity.
+        platform.observability.record_counter(
+            "ai.platform.models.fallbacks_total", 1.0, labels=model_labels
+        )
 
     step(
         "guardrails",
         "guardrails.filter_output",
         guardrails_out_ms,
         {"policies": "pii_redaction", "result": "passed"},
+    )
+    platform.observability.record_histogram(
+        "ai.platform.guardrails.evaluation_duration_ms",
+        guardrails_out_ms,
+        labels={"workflow_id": WORKFLOW_ID, "phase": "filter_output"},
     )
     step(
         "sessions",
