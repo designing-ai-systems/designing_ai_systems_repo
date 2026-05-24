@@ -38,7 +38,7 @@ jobs:
         with:
           enable-cache: true
           python-version: "3.12"
-      - run: uv sync --frozen --extra postgres
+      - run: uv sync --frozen --extra postgres --extra dashboards
       - run: uv run pytest tests/ -v
         env:
           DB_TEST_URL: postgresql://postgres:postgres@localhost:5432/genai_platform_test

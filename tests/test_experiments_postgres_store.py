@@ -1,8 +1,14 @@
 """Integration smoke test for the Postgres-backed experiments store.
 
-Skipped automatically unless ``EXPERIMENTS_POSTGRES_DSN`` is set to a
-reachable database. Mirrors the observability-store integration test
-shape so both services follow the same testing pattern.
+Skipped automatically unless a Postgres DSN is reachable. Two
+environment variables are honoured:
+
+- ``EXPERIMENTS_POSTGRES_DSN`` — local development.
+- ``DB_TEST_URL`` — the env var CI sets when it spins up the pgvector
+  service container.
+
+Mirrors the observability-store integration test shape so both
+services follow the same testing pattern.
 """
 
 from __future__ import annotations
@@ -29,7 +35,7 @@ psycopg2 = pytest.importorskip("psycopg2", reason="psycopg2 not installed")
 
 
 def _dsn() -> str | None:
-    return os.environ.get("EXPERIMENTS_POSTGRES_DSN")
+    return os.environ.get("EXPERIMENTS_POSTGRES_DSN") or os.environ.get("DB_TEST_URL")
 
 
 def _can_connect(dsn: str) -> bool:
@@ -43,7 +49,7 @@ def _can_connect(dsn: str) -> bool:
 
 pytestmark = pytest.mark.skipif(
     not _dsn() or not _can_connect(_dsn() or ""),
-    reason="EXPERIMENTS_POSTGRES_DSN unset or Postgres unreachable",
+    reason="EXPERIMENTS_POSTGRES_DSN / DB_TEST_URL unset or Postgres unreachable",
 )
 
 
@@ -51,7 +57,7 @@ pytestmark = pytest.mark.skipif(
 def store():
     from services.experiments.postgres_store import PostgresExperimentStore
 
-    s = PostgresExperimentStore()
+    s = PostgresExperimentStore(connection_string=_dsn())
     with s.conn.cursor() as cur:
         # Clean slate per test run. The order matters for FK constraints.
         cur.execute(

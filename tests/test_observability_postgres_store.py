@@ -1,9 +1,16 @@
 """Integration smoke test for the Postgres-backed observability store.
 
-Skipped automatically unless ``OBSERVABILITY_POSTGRES_DSN`` is set to a
-reachable database. The CI environment leaves it unset so the test suite
-stays Postgres-free; running ``docker compose up postgres`` locally and
-exporting the DSN exercises the SQL path end-to-end.
+Skipped automatically unless a Postgres DSN is reachable. Two
+environment variables are honoured:
+
+- ``OBSERVABILITY_POSTGRES_DSN`` — local development. Point at a
+  compose Postgres exposed on a host port.
+- ``DB_TEST_URL`` — the env var the GitHub Actions ``test`` job sets
+  when it spins up a pgvector service container.
+
+If neither is set or neither resolves to a reachable database, every
+test in this file is skipped so the default local + CI flow stays
+clean.
 """
 
 from __future__ import annotations
@@ -20,7 +27,16 @@ psycopg2 = pytest.importorskip("psycopg2", reason="psycopg2 not installed")
 
 
 def _dsn() -> str | None:
-    return os.environ.get("OBSERVABILITY_POSTGRES_DSN")
+    """Resolve a Postgres DSN.
+
+    Priority:
+      1. ``OBSERVABILITY_POSTGRES_DSN`` — set this locally when pointing at
+         a compose Postgres on a host port mapping.
+      2. ``DB_TEST_URL`` — the env var the GitHub Actions CI workflow
+         sets when it spins up the pgvector service container. Falling
+         back to it keeps the same tests gating both environments.
+    """
+    return os.environ.get("OBSERVABILITY_POSTGRES_DSN") or os.environ.get("DB_TEST_URL")
 
 
 def _can_connect(dsn: str) -> bool:
@@ -34,7 +50,7 @@ def _can_connect(dsn: str) -> bool:
 
 pytestmark = pytest.mark.skipif(
     not _dsn() or not _can_connect(_dsn() or ""),
-    reason="OBSERVABILITY_POSTGRES_DSN unset or Postgres unreachable",
+    reason="OBSERVABILITY_POSTGRES_DSN / DB_TEST_URL unset or Postgres unreachable",
 )
 
 
@@ -42,7 +58,7 @@ pytestmark = pytest.mark.skipif(
 def store():
     from services.observability.postgres_store import PostgresObservabilityStore
 
-    s = PostgresObservabilityStore()
+    s = PostgresObservabilityStore(connection_string=_dsn())
     # Clean slate per test run.
     with s.conn.cursor() as cur:
         cur.execute("TRUNCATE spans, generations, logs, metrics, scores RESTART IDENTITY")
@@ -161,7 +177,8 @@ class TestPostgresObservabilityStore:
         # idle-in-transaction connection holding locks.
         store.query_traces(limit=5)
 
-        dsn = os.environ["OBSERVABILITY_POSTGRES_DSN"]
+        dsn = _dsn()
+        assert dsn, "test should have been skipped if no DSN is reachable"
         probe = psycopg2.connect(dsn)
         probe.autocommit = True
         try:
