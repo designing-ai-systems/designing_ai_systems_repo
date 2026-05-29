@@ -144,7 +144,7 @@ docker compose build
 docker compose up -d
 
 # in a separate terminal, deploy + test a workflow
-genai-platform deploy examples/quickstart_workflow.py
+uv run genai-platform deploy examples/quickstart_workflow.py
 curl -X POST http://localhost:8080/patient-assistant \
      -H 'Content-Type: application/json' \
      -d '{"question":"What documents do I need?","patient_id":"p-1"}'
